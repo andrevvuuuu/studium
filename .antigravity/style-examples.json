@@ -1,0 +1,403 @@
+{
+  "version": "1.0.0",
+  "vault_name": "Obsidian Vault",
+  "disciplines": {
+    "Matematica": {
+      "polo": "università",
+      "tag": "matematica",
+      "profile_file": ".antigravity/disciplines/matematica.md",
+      "moc_examples": [
+        "Analisi 1 MOC.md",
+        "Geometria e Algebra Lineare MOC.md"
+      ],
+      "note_examples": [
+        "Numeri Interi Relativi.md",
+        "Numeri Naturali.md",
+        "Teorema di Unicità del Limite.md",
+        "Metodo di Eliminazione di Gauss.md",
+        "Elementi di Logica Matematica.md",
+        "Teoria Ingenua degli Insiemi.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Informatica": {
+      "polo": "università",
+      "tag": "informatica",
+      "profile_file": ".antigravity/disciplines/informatica.md",
+      "moc_examples": [
+        "Algoritmi e Strutture Dati MOC.md",
+        "Sistemi Operativi MOC.md"
+      ],
+      "note_examples": [
+        "Ricerca Binaria (Binary Search).md",
+        "Algoritmi di Ordinamento e Complessità Computazionale.md",
+        "Puntatori e Gestione della Memoria Dinamica in C.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Fisica": {
+      "polo": "università",
+      "tag": "fisica",
+      "profile_file": ".antigravity/disciplines/fisica.md",
+      "moc_examples": [
+        "Fisica Generale 1 MOC.md",
+        "Elettromagnetismo MOC.md"
+      ],
+      "note_examples": [
+        "Lavoro ed Energia Cinetica (Teorema delle Forze Vive).md",
+        "Principi della Dinamica Newtoniana e Forze Fondamentali.md",
+        "Conservazione della Quantità di Moto e Urti.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Intelligenza Artificiale": {
+      "polo": "università",
+      "tag": "intelligenza_artificiale",
+      "profile_file": ".antigravity/disciplines/intelligenza-artificiale.md",
+      "moc_examples": [
+        "Machine Learning MOC.md",
+        "Deep Learning e Reti Neurali MOC.md"
+      ],
+      "note_examples": [
+        "Discesa del Gradiente (Gradient Descent) e Varianti Stocastiche.md",
+        "Reti Neurali Artificiali Feedforward e Backpropagation.md",
+        "Funzioni di Perdita e Ottimizzazione in PyTorch.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Neuroscienze": {
+      "polo": "università",
+      "tag": "neuroscienze",
+      "profile_file": ".antigravity/disciplines/neuroscienze.md",
+      "moc_examples": [
+        "Neurobiologia Cellulare MOC.md",
+        "Neurofisiologia dei Sistemi Sensoriali e Motori MOC.md"
+      ],
+      "note_examples": [
+        "Potenziale di Membrana a Riposo e Potenziale d'Azione.md",
+        "Trasmissione Sinaptica e Meccanismi di Rilascio dei Neurotrasmettitori.md",
+        "Plasticità Sinaptica e Potenziamento a Lungo Termine (LTP).md"
+      ],
+      "auto_tools": {
+        "pubmed": true,
+        "science_media": true,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Biologia": {
+      "polo": "università",
+      "tag": "biologia",
+      "profile_file": ".antigravity/disciplines/biologia.md",
+      "moc_examples": [
+        "Biologia Molecolare e Genetica MOC.md",
+        "Biologia Cellulare MOC.md"
+      ],
+      "note_examples": [
+        "Il Dogma Centrale della Biologia Molecolare: Replicazione del DNA, Trascrizione e Traduzione.md",
+        "Respirazione Cellulare, Glicolisi e Fosforilazione Ossidativa.md",
+        "Regolazione dell'Espressione Genica negli Eucarioti.md"
+      ],
+      "auto_tools": {
+        "pubmed": true,
+        "science_media": true,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Bodybuilding": {
+      "polo": "personale",
+      "tag": "bodybuilding",
+      "profile_file": ".antigravity/disciplines/bodybuilding.md",
+      "moc_examples": [
+        "Bodybuilding MOC.md",
+        "Bicipiti e Flessori del Gomito MOC.md",
+        "Dorsali e Tirate MOC.md"
+      ],
+      "note_examples": [
+        "Bicipite Brachiale.md",
+        "Bayesian Cable Curl.md",
+        "Fattori Meccanici e Fisiologici dell'Ipertrofia Muscolare.md",
+        "Tensione Meccanica, Stretch-Mediated Hypertrophy e Insufficienza Attiva.md"
+      ],
+      "auto_tools": {
+        "pubmed": true,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Nutrizione e Salute": {
+      "polo": "personale",
+      "tag": "nutrizione_e_salute",
+      "profile_file": ".antigravity/disciplines/nutrizione-e-salute.md",
+      "moc_examples": [
+        "Nutrizione e Composizione Corporea MOC.md",
+        "Salute Metabolica e Integrazione MOC.md"
+      ],
+      "note_examples": [
+        "Sintesi Proteica Muscolare (MPS), Soglia Leucinica e Timing Proteico.md",
+        "Fabbisogno Energetico, Bilancio Calorico e Ripartizione dei Macronutrienti.md",
+        "Sensibilità Insulinica, Risposta Glicemica e Flessibilità Metabolica.md"
+      ],
+      "auto_tools": {
+        "pubmed": true,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Chimica": {
+      "polo": "personale",
+      "tag": "chimica",
+      "profile_file": ".antigravity/disciplines/chimica.md",
+      "moc_examples": [
+        "Chimica Generale ed Inorganica MOC.md",
+        "Chimica Organica MOC.md"
+      ],
+      "note_examples": [
+        "Legame Chimico, Elettronegatività, Ibridazione degli Orbitali e Polarità Molecolare.md",
+        "Termodinamica Chimica, Energia Libera di Gibbs ed Entalpia di Reazione.md",
+        "Reazioni di Sostituzione Nucleofila (SN1 e SN2).md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": true,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Droghe": {
+      "polo": "personale",
+      "tag": "droghe",
+      "profile_file": ".antigravity/disciplines/droghe.md",
+      "moc_examples": [
+        "Psicofarmacologia e Sostanze Psicoattive MOC.md",
+        "Sostanze Psichedeliche ed Enteogeni MOC.md"
+      ],
+      "note_examples": [
+        "MDMA (3,4-Metilendiossimetanfetamina): Struttura, Meccanismo Sinaptico, Effetti e Interazioni Pericolose.md",
+        "Psilocibina e Psilocina: Meccanismo Serotoninergico 5-HT2A e Rimodellamento del Default Mode Network.md",
+        "Cocaina e Dopamina: Inibizione del DAT, Tossicità Cardiovascolare e Cinetica di Dipendenza.md"
+      ],
+      "auto_tools": {
+        "pubmed": true,
+        "science_media": true,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Tecnologia ed Elettronica": {
+      "polo": "personale",
+      "tag": "tecnologia_ed_elettronica",
+      "profile_file": ".antigravity/disciplines/tecnologia-ed-elettronica.md",
+      "moc_examples": [
+        "Hardware e Architettura dei Calcolatori MOC.md",
+        "Elettronica dei Semiconduttori MOC.md"
+      ],
+      "note_examples": [
+        "Architettura dei Microprocessori e Pipeline di Istruzioni.md",
+        "Transistor MOSFET e Porte Logiche Digitali.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Musica e Industria Musicale": {
+      "polo": "personale",
+      "tag": "musica_e_industria_musicale",
+      "profile_file": ".antigravity/disciplines/musica-e-industria-musicale.md",
+      "moc_examples": [
+        "Teoria Musicale ed Armonia MOC.md",
+        "Music Business e Monetizzazione Discografica MOC.md"
+      ],
+      "note_examples": [
+        "Armonia Tonale e Teoria degli Intervalli Musicali.md",
+        "Copyright Musicale, Diritti Connessi e Meccanismi di Streaming Royalty.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Arte e Storia dell'Arte": {
+      "polo": "personale",
+      "tag": "arte_e_storia_dellarte",
+      "profile_file": ".antigravity/disciplines/arte-e-storia-dellarte.md",
+      "moc_examples": [
+        "Storia dell'Arte Occidentale MOC.md",
+        "Rinascimento e Barocco MOC.md"
+      ],
+      "note_examples": [
+        "Il Chiaroscuro di Caravaggio e la Rivoluzione Naturalistica del Barocco.md",
+        "Prospettiva Lineare e Rinascimento Fiorentino.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Filosofia": {
+      "polo": "personale",
+      "tag": "filosofia",
+      "profile_file": ".antigravity/disciplines/filosofia.md",
+      "moc_examples": [
+        "Filosofia Contemporanea MOC.md",
+        "Friedrich Nietzsche MOC.md",
+        "Epistemologia e Filosofia della Scienza MOC.md"
+      ],
+      "note_examples": [
+        "Friedrich Nietzsche: Volontà di Potenza e Nichilismo Attivo.md",
+        "L'Epistemologia di Karl Popper e il Principio di Falsificabilità.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Letteratura": {
+      "polo": "personale",
+      "tag": "letteratura",
+      "profile_file": ".antigravity/disciplines/letteratura.md",
+      "moc_examples": [
+        "Letteratura Italiana MOC.md",
+        "Classici della Letteratura Mondiale MOC.md"
+      ],
+      "note_examples": [
+        "Dante Alighieri: Architettura Allegorica e Giustizia Divina nell'Inferno.md",
+        "Giacomo Leopardi: La Teoria del Piacere e il Pessimismo Cosmico.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Analisi Narrativa": {
+      "polo": "personale",
+      "tag": "analisi_narrativa",
+      "profile_file": ".antigravity/disciplines/analisi-narrativa.md",
+      "moc_examples": [
+        "Analisi Narrativa e Storytelling MOC.md",
+        "Bleach MOC.md",
+        "Narrazione Manga e Anime MOC.md"
+      ],
+      "note_examples": [
+        "Bleach: Struttura Tematica, Evoluzione del Protagonista e Mitologia dei Mondi.md",
+        "Il Viaggio dell'Eroe e l'Archetipo Junghiano nella Narrativa Moderna.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Storia": {
+      "polo": "personale",
+      "tag": "storia",
+      "profile_file": ".antigravity/disciplines/storia.md",
+      "moc_examples": [
+        "Storia Contemporanea MOC.md",
+        "Guerra Fredda MOC.md"
+      ],
+      "note_examples": [
+        "La Crisi del 1929 e la Grande Depressione: Cause Strutturali e Impatto Globale.md",
+        "La Guerra Fredda e la Crisi dei Missili di Cuba (1962).md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Politica e Geopolitica": {
+      "polo": "personale",
+      "tag": "politica_e_geopolitica",
+      "profile_file": ".antigravity/disciplines/politica-e-geopolitica.md",
+      "moc_examples": [
+        "Geopolitica Globale MOC.md",
+        "Relazioni Internazionali e Conflitti MOC.md"
+      ],
+      "note_examples": [
+        "Geopolitica dell'Indo-Pacifico e Teoria dell'Heartland.md",
+        "La Dottrina della Separazione dei Poteri e la Crisi della Rappresentanza.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Economia e Finanza": {
+      "polo": "personale",
+      "tag": "economia_e_finanza",
+      "profile_file": ".antigravity/disciplines/economia-e-finanza.md",
+      "moc_examples": [
+        "Macroeconomia e Politica Monetaria MOC.md",
+        "Finanza Operativa e Investimenti MOC.md"
+      ],
+      "note_examples": [
+        "Teoria dei Mercati Finanziari ed Efficienza dei Prezzi (EMH).md",
+        "Politica Monetaria delle Banche Centrali, Inflazione e Tassi di Interesse.md"
+      ],
+      "auto_tools": {
+        "pubmed": false,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    },
+    "Psicologia": {
+      "polo": "personale",
+      "tag": "psicologia",
+      "profile_file": ".antigravity/disciplines/psicologia.md",
+      "moc_examples": [
+        "Psicologia Cognitiva MOC.md",
+        "Psicologia Dinamica e della Personalità MOC.md"
+      ],
+      "note_examples": [
+        "I Meccanismi di Difesa dell'Io nella Psicoanalisi Classica.md",
+        "Bias Cognitivi, Euristiche e Teoria del Prospetto di Kahneman e Tversky.md"
+      ],
+      "auto_tools": {
+        "pubmed": true,
+        "science_media": false,
+        "pdf_extract": true,
+        "youtube_watch": true
+      }
+    }
+  }
+}

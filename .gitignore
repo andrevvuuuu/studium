@@ -1,0 +1,24 @@
+# Lista bianca: il repository contiene solo l'automazione Antigravity, non le note del vault.
+/*
+!/.gitignore
+!/Scripts/
+/Scripts/*
+!/Scripts/antigravity_menu.js
+!/Scripts/run_job.sh
+!/Scripts/study_panel.js
+!/.antigravity/
+/.antigravity/*
+!/.antigravity/tools/
+!/.antigravity/scripts/
+!/.antigravity/disciplines/
+!/.antigravity/snippets/
+!/.antigravity/core-guidelines.md
+!/.antigravity/style-examples.json
+!/.antigravity/Antigravity Trigger.md
+!/.antigravity/notify.example.json
+!/.github/
+!/LICENSE
+__pycache__/
+*.pyc
+.DS_Store
+/.antigravity/tools/claude-watch

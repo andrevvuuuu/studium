@@ -1,0 +1,1 @@
+../.antigravity/scripts/study_panel.js

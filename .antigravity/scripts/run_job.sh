@@ -134,7 +134,13 @@ if [ -f "$PROMPT_FILE" ]; then
 
     if [ -x "$AGY_BIN" ]; then
         echo "🤖 Avvio automatico dell'agente Antigravity ($AGY_BIN)..."
-        "$AGY_BIN" -p "Leggi attentamente ed esegui la missione operativa descritta nel file $PROMPT_FILE. Genera la nota completa e salvala direttamente nel file target indicato nel prompt." --dangerously-skip-permissions >> "$RUNTIME_DIR/job-output.log" 2>&1 || true
+        # Output di agy in un file suo (job-output.log viene riscritto da chi lancia lo script)
+        AGY_LOG="$RUNTIME_DIR/agy-output.log"
+        touch "$RUNTIME_DIR/agy-start.marker"
+        AGY_EXIT=0
+        "$AGY_BIN" -p "Leggi attentamente ed esegui la missione operativa descritta nel file $PROMPT_FILE. Genera la nota completa e salvala direttamente nel file target indicato nel prompt." --dangerously-skip-permissions > "$AGY_LOG" 2>&1 || AGY_EXIT=$?
+        echo "   agy terminato (codice $AGY_EXIT). Ultime righe:"
+        tail -n 5 "$AGY_LOG" | sed 's/^/   | /'
     else
         echo "⚠️  Binario agy non trovato. Il prompt è disponibile in: $PROMPT_FILE"
         update_status 0 0 "Comando agy non trovato" "Impossibile trovare il binario agy su $AGY_BIN" "error" "Binario agy non trovato"
@@ -147,6 +153,20 @@ if [ -f "$PROMPT_FILE" ]; then
         if [ -n "$LIVE_TARGET" ]; then
             TARGET_FILE="$LIVE_TARGET"
         fi
+    fi
+
+    # agy deve aver scritto (o modificato) la nota: altrimenti errore esplicito, niente post-processing
+    if [ -n "$TARGET_FILE" ] && ! [ "$VAULT_DIR/$TARGET_FILE" -nt "$RUNTIME_DIR/agy-start.marker" ]; then
+        if [ -n "$MONITOR_PID" ]; then kill -15 "$MONITOR_PID" 2>/dev/null || true; fi
+        if grep -qiE "quota_exhausted|resource_exhausted|quota|exhausted|rate.?limit|\b429\b|credits?" "$AGY_LOG" 2>/dev/null; then
+            RESET_AT=$(grep -oE '"quotaResetTimeStamp": *"[^"]+"' "$AGY_LOG" | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+            AGY_ERR="⏳ agy ha finito la quota di Antigravity${RESET_AT:+ (ripristino: $RESET_AT)}"
+        else
+            AGY_ERR="❌ agy non ha scritto la nota (codice $AGY_EXIT): $(grep -v '^[[:space:]]*$' "$AGY_LOG" 2>/dev/null | tail -n 1 | cut -c1-200)"
+        fi
+        echo "$AGY_ERR"
+        update_status 0 5 "$AGY_ERR" "Output completo di agy: $AGY_LOG" "error" "$AGY_ERR"
+        exit 1
     fi
 
     # Determina messaggio di successo specifico per l'operazione

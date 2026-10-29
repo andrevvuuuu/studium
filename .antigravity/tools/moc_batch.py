@@ -59,6 +59,20 @@ RATE_LIMIT_MAX_WAITS = 30  # circa un giorno: la finestra breve di NotebookLM pu
 # Dopo un'attesa si riparte con una nota sola (fa da prova con lavoro vero: il limite è sul calcolo
 # consumato, non sul numero di domande) e si torna al parallelo pieno dopo qualche nota riuscita
 RATE_LIMIT_RAMP_SUCCESSES = 3
+# Quota di agy (Antigravity) esaurita: se il ripristino è vicino si aspetta, altrimenti pausa con notifica
+AGY_QUOTA_MARKER = "agy ha finito la quota"
+AGY_QUOTA_MAX_WAIT_HOURS = 6
+
+
+def agy_quota_reset(error: str) -> Optional[float]:
+    """Istante di ripristino (epoch) scritto da run_job.sh nell'errore, o None."""
+    m = re.search(r"ripristino: ([0-9T:\-\.]+Z?)", error or "")
+    if not m:
+        return None
+    try:
+        return datetime.fromisoformat(m.group(1).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
 MAX_CONSECUTIVE_FAILURES = 2
 # Note scritte contemporaneamente (sempre di moduli diversi del MOC)
 DEFAULT_PARALLEL_NOTES = 2
@@ -546,6 +560,9 @@ def run_batch(cfg_path: Path) -> int:
             if RATE_LIMIT_MARKER in str(result.get("error") or ""):
                 result["rate_limited"] = True
                 break
+            if AGY_QUOTA_MARKER in str(result.get("error") or ""):
+                result["agy_quota"] = True
+                break
             if result["ok"] or stop_requested():
                 break
             log(f"   ❌ {note['title']}: tentativo {attempt} fallito: {result['error']}")
@@ -600,6 +617,23 @@ def run_batch(cfg_path: Path) -> int:
                 except Exception as e:
                     result = {"title": info["title"], "ok": False, "error": str(e), "seconds": 0, "index": info["index"]}
                 state["active"] = list(running.values())
+                if result.get("agy_quota"):
+                    pending.insert(0, queued.pop(fut))
+                    if resume_after or paused_msg:
+                        log(f"   ⏳ {result['title']}: rimessa in coda (quota agy)")
+                        continue
+                    reset = agy_quota_reset(result.get("error", ""))
+                    if reset and reset - time.time() > AGY_QUOTA_MAX_WAIT_HOURS * 3600:
+                        when = datetime.fromtimestamp(reset).strftime("%d/%m alle %H:%M")
+                        paused_msg = (f"⏸️ Batch in pausa: agy ha finito la quota di Antigravity, ripristino il {when}. "
+                                      "Riavvia il batch dopo (riprende dalle note mancanti) oppure cambia modello in agy.")
+                    else:
+                        resume_after = (reset + 120) if reset else time.time() + 30 * 60
+                        label = datetime.fromtimestamp(resume_after).strftime("%H:%M")
+                        log(f"   ⏳ {result['title']}: agy ha finito la quota, rimessa in coda. Nuovo tentativo alle {label}")
+                        publish(status="waiting", message=f"⏳ agy ha finito la quota di Antigravity: nuovo tentativo alle {label}")
+                        notify(f"Batch in attesa: {state['moc_name']}", f"agy ha finito la quota. Riprendo alle {label}.", "default")
+                    continue
                 if result.get("rate_limited"):
                     pending.insert(0, queued.pop(fut))
                     if resume_after:

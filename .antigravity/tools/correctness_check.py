@@ -143,14 +143,46 @@ def is_verified(text: str) -> bool:
 NO_TOOLS = "\n\nLavora solo sul testo di questo messaggio: non leggere file, non usare strumenti, non cercare sul web. Rispondi direttamente con il JSON."
 
 
+QUOTA_RE = re.compile(r"quota reached|RESOURCE_EXHAUSTED", re.I)
+RESET_RE = re.compile(r"Resets in\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?")
+MAX_QUOTA_WAIT = 6 * 3600
+
+
+class QuotaExhausted(Exception):
+    def __init__(self, wait: int):
+        super().__init__(f"quota di Antigravity esaurita, riparte tra {wait // 60} min")
+        self.wait = wait
+
+
+def quota_wait(text: str) -> Optional[int]:
+    """Secondi fino al reset della quota se agy dice che è esaurita, altrimenti None."""
+    if not QUOTA_RE.search(text):
+        return None
+    m = RESET_RE.search(text)
+    h, mi, se = (int(g or 0) for g in m.groups()) if m else (0, 30, 0)
+    return h * 3600 + mi * 60 + se
+
+
 def ask_agy(prompt: str, schema: Dict[str, Any], model: str = "", timeout_sec: int = 900, attempts: int = 3) -> Optional[Dict[str, Any]]:
-    """Come ask_agy_once, ma riprova quando agy torna vuoto (strumento negato in headless, timeout a metà turno)."""
-    for n in range(attempts):
-        out = ask_agy_once(prompt + NO_TOOLS, schema, model=model, timeout_sec=timeout_sec)
+    """Come ask_agy_once, ma riprova quando agy torna vuoto (strumento negato in headless, timeout a metà turno)
+    e, a quota esaurita, aspetta il reset invece di far fallire le note che restano."""
+    n, waited = 0, 0
+    while n < attempts:
+        try:
+            out = ask_agy_once(prompt + NO_TOOLS, schema, model=model, timeout_sec=timeout_sec)
+        except QuotaExhausted as e:
+            if waited + e.wait > MAX_QUOTA_WAIT:
+                sys.stderr.write(f"[Correttezza] {e}: troppo lontano, mi fermo\n")
+                return None
+            sys.stderr.write(f"[Correttezza] {e}: aspetto\n")
+            time.sleep(e.wait + 30)
+            waited += e.wait + 30
+            continue
         if out is not None:
             return out
-        if n + 1 < attempts:
-            sys.stderr.write(f"[Correttezza] Nuovo tentativo ({n + 2}/{attempts})\n")
+        n += 1
+        if n < attempts:
+            sys.stderr.write(f"[Correttezza] Nuovo tentativo ({n + 1}/{attempts})\n")
     return None
 
 
@@ -184,6 +216,9 @@ def ask_agy_once(prompt: str, schema: Dict[str, Any], model: str = "", timeout_s
                 return json.loads(data["response"])
             except Exception:
                 pass
+    wait = quota_wait(out + (proc.stderr or ""))
+    if wait is not None:
+        raise QuotaExhausted(wait)
     sys.stderr.write(f"[Correttezza] Output di agy non interpretabile: {out[:300]} {(proc.stderr or '')[:300]}\n")
     return None
 

@@ -35,6 +35,19 @@ from typing import Any, Dict, List, Optional, Tuple
 ANKI_CONNECT_URL = "http://127.0.0.1:8765"
 DEFAULT_CONNECT_TIMEOUT = 2.0
 
+# Materie ripassate solo in Sinapsi (un solo sistema di ripasso): le loro note non vanno in Anki.
+# ANTIGRAVITY_ANKI_SKIP="Matematica,Informatica" per cambiarle, "" per mandare tutto ad Anki.
+SINAPSI_SUBJECTS = {s.strip().lower() for s in os.environ.get("ANTIGRAVITY_ANKI_SKIP", "Matematica").split(",") if s.strip()}
+
+
+def reviewed_in_sinapsi(file_path: Path, vault_root: Path, fm: Dict[str, Any]) -> bool:
+    disciplina = str(fm.get("Disciplina") or fm.get("disciplina") or "")
+    try:
+        folder = file_path.resolve().relative_to(vault_root.resolve()).parts[0]
+    except (ValueError, IndexError):
+        folder = ""
+    return bool(SINAPSI_SUBJECTS & {disciplina.strip().lower(), folder.lower()})
+
 
 def resolve_vault_root() -> Path:
     """Risolve la radice del vault Obsidian."""
@@ -340,6 +353,12 @@ def sync_note_to_anki(
     except Exception as e:
         result_summary["status"] = "error"
         result_summary["error"] = f"Impossibile leggere il file: {e}"
+        return result_summary
+
+    if reviewed_in_sinapsi(file_path, vault_root, parse_frontmatter(content)):
+        result_summary["status"] = "sinapsi"
+        if verbose:
+            print(f"ℹ️ {file_path.name}: materia ripassata in Sinapsi, niente Anki (ANTIGRAVITY_ANKI_SKIP per cambiare).")
         return result_summary
 
     raw_study_block = extract_study_block(content)

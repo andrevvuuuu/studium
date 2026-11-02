@@ -4244,6 +4244,25 @@ def post_process_job(vault_root: Path, job_file: Path) -> int:
         job_file.write_text(json.dumps(job_data, indent=2, ensure_ascii=False), encoding="utf-8")
         sys.stdout.write(f"[PostProcess] {summary}\n")
 
+    # Verifica di correttezza con un secondo modello (via agy): corregge gli errori certi, segnala i dubbi
+    if op_type in ("normal", "edit") and (vault_root / target_rel).exists():
+        update_status(
+            vault_root=vault_root, percent=98, step_number=6, total_steps=6,
+            message="🔎 Verifica e correzione (secondo modello via agy)...",
+            detail="Un secondo modello controlla definizioni, enunciati, dimostrazioni e calcoli e corregge gli errori certi",
+            status="running", target_file=target_rel, phase="verify",
+        )
+        try:
+            import correctness_check
+            note = correctness_check.summary(correctness_check.check_note(vault_root / target_rel, fix=True))
+        except Exception as e:
+            sys.stderr.write(f"[PostProcess] Verifica di correttezza non riuscita: {e}\n")
+            note = f"⚠️ Verifica di correttezza non completata: {e}"
+        if note:
+            job_data["grounding_summary"] = (job_data.get("grounding_summary", "") + " · " + note).strip(" ·")
+            job_file.write_text(json.dumps(job_data, indent=2, ensure_ascii=False), encoding="utf-8")
+            sys.stdout.write(f"[PostProcess] {note}\n")
+
     # Sezioni richieste dai MOC con [[Nota#Sezione]]: se mancano, il link del MOC non porta da nessuna parte
     if op_type in ("normal", "edit"):
         try:

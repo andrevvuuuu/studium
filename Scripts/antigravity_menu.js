@@ -645,7 +645,7 @@ const HUD_PHASES = [
     { key: "sources", label: "Lettura delle fonti", weight: 90 },
     { key: "context", label: "Collegamenti e istruzioni", weight: 15 },
     { key: "writing", label: "Scrittura", weight: 300 },
-    { key: "verify", label: "Verifica esclusività", weight: 380 },
+    { key: "verify", label: "Verifica (fonti e correttezza)", weight: 380 },
     { key: "final", label: "Rifinitura", weight: 10 },
 ];
 const HUD_PHASE_ORDER = HUD_PHASES.map(p => p.key);
@@ -1879,6 +1879,107 @@ async function runMocBatchFlow(tp, app, vaultBasePath) {
 }
 
 /**
+ * Verifica e correzione di note esistenti (correctness_check.py --fix, via agy): un secondo modello corregge gli errori certi
+ * (con backup) e segnala i dubbi nella nota. Per le note nuove o modificate lo fa già la pipeline.
+ */
+async function runCorrectnessFlow(tp, app, vaultBasePath) {
+    const script = path.join(vaultBasePath, ".antigravity", "tools", "correctness_check.py");
+    const notes = app.vault.getMarkdownFiles().filter(f => !f.path.startsWith("."));
+    const activeFile = app.workspace.getActiveFile();
+    const scopeOptions = [];
+    if (activeFile && activeFile.extension === "md" && !activeFile.path.startsWith(".")) {
+        scopeOptions.push({ label: `⭐ Nota attiva: ${activeFile.basename}`, value: "active" });
+    }
+    scopeOptions.push(
+        { label: "📄 Scegli una nota", value: "note" },
+        { label: "🗺️ Tutte le note collegate a un MOC", value: "moc" },
+        { label: "📁 Tutte le note di una cartella", value: "folder" }
+    );
+    const scope = await tp.system.suggester(scopeOptions.map(o => o.label), scopeOptions.map(o => o.value), false, "Verifica 1/2: Cosa vuoi verificare e correggere?");
+    if (!scope) return;
+
+    let args = null;
+    let count = 1;
+    if (scope === "active") {
+        args = [activeFile.path];
+    } else if (scope === "note") {
+        const file = await tp.system.suggester(notes.map(f => `📄 ${f.basename} (${f.path})`), notes, false, "Verifica 2/2: Scegli la nota");
+        if (!file) return;
+        args = [file.path];
+    } else if (scope === "moc") {
+        const isMoc = f => {
+            const fm = app.metadataCache.getFileCache(f)?.frontmatter || {};
+            const types = Array.isArray(fm.Type) ? fm.Type : (fm.Type ? [fm.Type] : []);
+            return types.some(t => String(t).toLowerCase() === "moc") || /^\d+ MOC/.test(f.path) || f.basename.endsWith(" MOC");
+        };
+        const mocs = notes.filter(isMoc).sort((a, b) => a.basename.localeCompare(b.basename));
+        if (!mocs.length) {
+            if (window.Notice) new window.Notice("Nessun MOC trovato nel vault.", 4000);
+            return;
+        }
+        const linked = f => new Set((app.metadataCache.getFileCache(f)?.links || []).map(l => app.metadataCache.getFirstLinkpathDest(l.link.split("#")[0], f.path)?.path).filter(Boolean)).size;
+        const moc = await tp.system.suggester(mocs.map(f => `🗺️ ${f.basename} (${linked(f)} note collegate)`), mocs, false, "Verifica 2/3: Scegli il MOC");
+        if (!moc) return;
+        const which = await tp.system.suggester(
+            ["▶️ Solo note mai verificate o con errori rimasti", "🔁 Tutte, anche quelle già verificate"],
+            ["pending", "all"], false, "Verifica 3/3: Quali note del MOC?"
+        );
+        if (!which) return;
+        args = ["--moc", moc.path].concat(which === "pending" ? ["--skip-verified", "--recheck"] : []);
+        count = linked(moc);
+    } else {
+        const counts = new Map();
+        for (const f of notes) {
+            const parts = f.path.split("/").slice(0, -1);
+            for (let i = 1; i <= parts.length; i++) counts.set(parts.slice(0, i).join("/"), (counts.get(parts.slice(0, i).join("/")) || 0) + 1);
+        }
+        const folders = [...counts.keys()].sort();
+        const folder = await tp.system.suggester(folders.map(d => `📁 ${d} (${counts.get(d)} note)`), folders, false, "Verifica 2/3: Scegli la cartella");
+        if (!folder) return;
+        const which = await tp.system.suggester(
+            ["▶️ Solo note mai verificate o con errori rimasti", "🔁 Tutte, anche quelle già verificate"],
+            ["pending", "all"], false, "Verifica 3/3: Quali note della cartella?"
+        );
+        if (!which) return;
+        args = ["--folder", folder].concat(which === "pending" ? ["--skip-verified", "--recheck"] : []);
+        count = counts.get(folder);
+    }
+
+    // Più note insieme: un'istanza di agy per nota, consuma la quota di Antigravity più in fretta
+    let parallel = 1;
+    if (count > 1) {
+        parallel = await tp.system.suggester(
+            ["⚡ 3 note alla volta (consigliato)", "🚀 5 note alla volta (più veloce, più quota)", "🐢 1 nota alla volta"],
+            [3, 5, 1], false, "Quante note correggere insieme?"
+        );
+        if (!parallel) return;
+    }
+
+    const runtimeDir = getRuntimeDir();
+    const logPath = path.join(runtimeDir, "correctness.log");
+    let logFd = "ignore";
+    try { logFd = fs.openSync(logPath, "w"); } catch (_) {}
+    const child = child_process.spawn("python3", [script, "--fix", "--parallel", String(parallel)].concat(args), {
+        cwd: vaultBasePath,
+        detached: true,
+        stdio: ["ignore", logFd, logFd],
+        env: getMacOSPathEnv()
+    });
+    child.unref();
+    if (window.Notice) {
+        new window.Notice(count > 1
+            ? `Verifica e correzione avviate: fino a ${count} note, ${parallel} alla volta (circa ${Math.ceil(count / parallel) * 4} minuti). Il dettaglio è in ${logPath}.`
+            : "Verifica e correzione avviate: circa 4 minuti. Le correzioni e i dubbi rimasti finiranno nella nota.", 8000);
+    }
+    child.on("exit", () => {
+        let lines = [];
+        try { lines = fs.readFileSync(logPath, "utf8").split("\n").filter(l => /^\[\d+\/\d+\]/.test(l)); } catch (_) {}
+        const text = lines.length === 1 ? lines[0].replace(/^\[\d+\/\d+\]\s*/, "") : `Verifica conclusa su ${lines.length} note. Dettaglio in ${logPath}.`;
+        if (window.Notice) new window.Notice(text || "Verifica conclusa.", 12000);
+    });
+}
+
+/**
  * Funzione principale esportata per Templater
  */
 module.exports = async function (tp) {
@@ -2028,7 +2129,8 @@ module.exports = async function (tp) {
             { label: "📝 Crea Nota Normale (Nuova)", value: "normal" },
             { label: "🗺️ Crea / Aggiorna MOC (Map of Content)", value: "moc" },
             { label: "🛠️ Modifica / Migliora Nota Esistente", value: "edit" },
-            { label: "🤖 Crea Note in Automatico dal MOC (Batch)", value: "moc_batch" }
+            { label: "🤖 Crea Note in Automatico dal MOC (Batch)", value: "moc_batch" },
+            { label: "🔎 Verifica e Correggi Note Esistenti", value: "correctness" }
         ];
 
         const chosenOp = await tp.system.suggester(
@@ -2044,6 +2146,11 @@ module.exports = async function (tp) {
 
         if (chosenOp === "moc_batch") {
             await runMocBatchFlow(tp, app, vaultBasePath);
+            return "";
+        }
+
+        if (chosenOp === "correctness") {
+            await runCorrectnessFlow(tp, app, vaultBasePath);
             return "";
         }
 

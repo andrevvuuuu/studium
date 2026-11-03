@@ -105,6 +105,46 @@ async function act(app, vaultBasePath, kind, lesson, button) {
     }
 }
 
+/**
+ * Posizione: nella barra laterale sinistra, in alto a destra subito sotto le sue schede (la pillola finisce al
+ * bordo destro della barra laterale, la scheda aperta parte dallo stesso punto e si allarga sopra la nota).
+ * Con la barra laterale chiusa resta in alto a destra della finestra (CSS).
+ */
+function place(root) {
+    const side = document.querySelector(".workspace-split.mod-left-split");
+    const rect = side && side.getBoundingClientRect();
+    if (!rect || rect.width < 120) {
+        root.style.removeProperty("top");
+        root.style.removeProperty("left");
+        root.style.removeProperty("right");
+        return;
+    }
+    const header = side.querySelector(".workspace-tab-header-container");
+    const top = (header ? header.getBoundingClientRect().bottom : rect.top + 40) + 20;
+    // Con la scheda aperta la pillola è nascosta: si usa la larghezza misurata quando era visibile
+    const pill = root.querySelector(".ag-tutor-pill");
+    if (pill && pill.offsetWidth) window._agTutorPillWidth = pill.offsetWidth;
+    const pillWidth = window._agTutorPillWidth || 160;
+    const left = Math.max(8, rect.right - 12 - pillWidth);
+    root.style.top = `${Math.round(top)}px`;
+    root.style.left = `${Math.round(left)}px`;
+    root.style.right = "auto";
+}
+
+function watchPlacement(root) {
+    const again = () => { if (document.body.contains(root)) place(root); };
+    // La barra si ridisegna a ogni cambio di stato: un solo osservatore alla volta
+    window._agTutorPlacement?.disconnect();
+    window.removeEventListener("resize", window._agTutorResize || (() => {}));
+    window._agTutorResize = again;
+    window.addEventListener("resize", again);
+    const side = document.querySelector(".workspace-split.mod-left-split");
+    if (side && typeof ResizeObserver !== "undefined") {
+        window._agTutorPlacement = new ResizeObserver(again);
+        window._agTutorPlacement.observe(side);
+    }
+}
+
 const hiddenToday = (today) => { try { return localStorage.getItem("ag-tutor-hidden") === today; } catch (_) { return false; } };
 
 function el(tag, cls, text) {
@@ -134,6 +174,7 @@ function render(app, vaultBasePath) {
         card.hidden = !open;
         root.classList.toggle("is-open", open);
         try { localStorage.setItem("ag-tutor-open", open ? "1" : "0"); } catch (_) {}
+        place(root);
     };
     let startOpen = false;
     try { startOpen = localStorage.getItem("ag-tutor-open") === "1"; } catch (_) {}
@@ -197,8 +238,9 @@ function render(app, vaultBasePath) {
     }
     if (v.foot) card.appendChild(el("div", "ag-tutor-foot", v.foot));
     root.appendChild(card);
-    setOpen(startOpen);
     document.body.appendChild(root);
+    setOpen(startOpen);
+    watchPlacement(root);
 }
 
 module.exports = render;

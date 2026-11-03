@@ -114,6 +114,16 @@ Nessun passaggio concettuale, matematico, biologico, algoritmico o storico può 
 3. **Catene Causali nelle Scienze Sperimentali e Naturali:**
    - Nelle note di Neuroscienze, Biologia, Medicina, Farmacologia e Bodybuilding, i processi biologici devono essere espressi come **catene causali causa-effetto sequenziali numerate**, senza buchi temporali o salti molecolari (es. *Stimolo meccanico $\to$ apertura canali meccanosensibili Piezo1 $\to$ influsso di $\text{Ca}^{2+}$ $\to$ attivazione FAK/mTORC1 $\to$ fosforilazione p70S6K $\to$ traduzione ribosomiale*).
 
+4. **Espandere sì, inventare no (vale per ogni materia):**
+   - Spiegazioni espanse, riformulazioni e passaggi ricostruiti sono obbligatori, ma sono proprio le parti in cui nascono gli errori: le fonti del professore sono corrette, le aggiunte dell'agente no per definizione. Ogni aggiunta deve restare fedele a ciò che le fonti affermano:
+     - **Condizioni e ipotesi:** quando riformuli un enunciato, una definizione o un meccanismo, conserva tutte le sue condizioni (domini, segni, casi limite, eccezioni, contesto sperimentale), con la stessa forza.
+     - **Niente generalizzazioni:** non estendere un risultato oltre ciò che le fonti sostengono ("vale sempre", "unicamente", "in ogni caso"). Un'estensione o ha la sua giustificazione o resta fuori.
+     - **Passaggi ricostruiti:** ogni passaggio aggiunto cita la sua giustificazione (definizione, ipotesi, risultato noto con le ipotesi verificate, dato della fonte) e tratta i casi limite.
+     - **Nomi e termini:** usa la terminologia standard o quella delle fonti; non inventare etichette.
+     - **Argomenti fuori dalle fonti:** si nominano con un wikilink, senza enunciarli né spiegarli a memoria.
+     - **Fedeltà alle fonti:** se la fonte usa una formulazione corretta ma diversa da quella che preferiresti (convenzioni, notazioni, definizioni equivalenti), tieni quella della fonte.
+   - Prima di chiudere la nota rileggi una volta passaggi ricostruiti, esempi, dati e quiz con queste regole: è il controllo che costa meno, perché avviene mentre scrivi. I profili delle materie (`.antigravity/disciplines/`) aggiungono gli errori tipici della disciplina.
+
 ---
 
 ## LEGGE 3: Standard Frontmatter YAML e Tipizzazione Automatica
@@ -347,7 +357,7 @@ Le Flashcard e i Quiz non sono un riassunto mnemonico passivo, ma uno strumento 
 - **I 4 Ambiti di Indagine Obbligatori:**
   1. **Il "Perché" dei Vincoli e delle Ipotesi:** Cosa crolla se cade una specifica ipotesi? (Es. *"Perché nel teorema di Rolle è richiesta la continuità sull'intervallo chiuso e non solo sull'aperto? Quale controesempio invalida la tesi se la funzione è discontinua agli estremi?"*).
   2. **Decodifica di Formule, Simboli e Meccanismi:** Cosa rappresenta un termine specifico in una formula o un passaggio in una reazione/circuito? (Es. *"Nell'equazione di Schrödinger, cosa quantifica il termine $-\frac{\hbar^2}{2m}\nabla^2$ e perché include il segno meno?"*).
-  3. **Individuazione di Trappole d'Esame e Falsi Ragionamenti (Distrattori Plausibili):** Nei Quiz a 4 opzioni, i distrattori (opzioni errate) devono rappresentare i tipici errori commessi dagli studenti (scambio di ipotesi e tesi, errori di segno, generalizzazioni indebite). Nel campo `**EXPLANATION:**` devi analizzare esplicitamente **sia la risposta corretta sia i trabocchetti dei distrattori**.
+  3. **Individuazione di Trappole d'Esame e Falsi Ragionamenti (Distrattori Plausibili):** Nei Quiz a 4 opzioni, i distrattori (opzioni errate) devono rappresentare i tipici errori commessi dagli studenti (scambio di ipotesi e tesi, errori di segno, generalizzazioni indebite). Nel campo `**EXPLANATION:**` devi analizzare esplicitamente **sia la risposta corretta sia i trabocchetti dei distrattori**. Per ogni quiz stabilisci prima la risposta corretta, poi controlla che ogni distrattore sia davvero sbagliato; la lettera in `**CORRECT:**` e quella citata in `**EXPLANATION:**` devono coincidere.
   4. **Applicazione Pratica, Discriminazione e Calcolo Rapido:** Porre scenari operativi in cui bisogna scegliere il metodo o il setup corretto (es. *"Tra questi 4 integrali, quale non può essere risolto per parti standard e richiede la sostituzione euleriana?"*).
 
 ### 3. Sincronizzazione Automatica e Continua con Anki

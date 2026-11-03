@@ -7,9 +7,11 @@ questa controlla che ciò che dice sia vero: definizioni, enunciati, dimostrazio
 Le note non vengono rilette a mano e Sinapsi le usa come base di studio, quindi un errore di Gemini
 verrebbe imparato come vero.
 
-Con --fix (sempre attivo nella pipeline) gli errori certi vengono corretti: un secondo passaggio
-riscrive solo i passaggi segnalati (backup in .antigravity/backups/), poi la nota viene riverificata,
-al massimo due volte. I dubbi non vengono mai toccati. L'esito va nel frontmatter (Verifica: ok |
+Una sola chiamata sulla nota intera: il revisore segnala i problemi e, per gli errori certi, scrive già
+le modifiche find/replace. Con --fix (sempre attivo nella pipeline) le modifiche vengono applicate e una
+seconda chiamata, breve e con un modello più leggero, controlla solo i brani cambiati: le correzioni
+bocciate vengono annullate e restano segnalate (backup in .antigravity/backups/). I dubbi non vengono
+mai toccati. Prima erano fino a cinque chiamate sulla nota intera (verifica, correzione, riverifica, due giri). L'esito va nel frontmatter (Verifica: ok |
 dubbi | errori, Verificata: data, Corretti: numero) e le segnalazioni rimaste in un callout subito
 dopo il frontmatter, tra i commenti %% verifica-inizio %% e %% verifica-fine %%. Sinapsi legge entrambi.
 
@@ -29,6 +31,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -43,6 +46,7 @@ RUNTIME_DIR = Path(os.environ.get("ANTIGRAVITY_RUNTIME_DIR") or "/tmp/antigravit
 BLOCK_RE = re.compile(re.escape(START) + r".*?" + re.escape(END) + r"\n*", re.S)
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 
+EDIT = {"type": "object", "properties": {"find": {"type": "string"}, "replace": {"type": "string"}}, "required": ["find", "replace"]}
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -55,8 +59,9 @@ SCHEMA = {
                     "problem": {"type": "string"},
                     "correction": {"type": "string"},
                     "severity": {"type": "string", "enum": ["errore", "dubbio"]},
+                    "edits": {"type": "array", "items": EDIT},
                 },
-                "required": ["quote", "problem", "correction", "severity"],
+                "required": ["quote", "problem", "correction", "severity", "edits"],
             },
         }
     },
@@ -65,7 +70,7 @@ SCHEMA = {
 
 PROMPT = """Sei un revisore matematico e scientifico. La nota qui sotto è stata scritta da un altro modello AI. Uno studente universitario la userà come base di studio senza rileggerla: ogni errore che ti sfugge lo imparerà come vero.
 
-Controlla la CORRETTEZZA, riga per riga:
+Controlla la CORRETTEZZA:
 - definizioni (condizioni mancanti, di troppo o sbagliate);
 - enunciati (ipotesi mancanti o superflue, tesi sbagliate, quantificatori invertiti);
 - dimostrazioni (passaggi non validi, ragionamenti circolari, casi dimenticati, uso di un risultato senza averne verificato le ipotesi);
@@ -75,56 +80,35 @@ Controlla la CORRETTEZZA, riga per riga:
 NON segnalare stile, formattazione, completezza, scelte didattiche, livello di dettaglio, wikilink o frontmatter.
 Segnala solo ciò che sapresti giustificare. Per ogni problema:
 - "quote": il testo ESATTO della nota dove si trova (al massimo 300 caratteri);
-- "problem": cosa non va e perché, in italiano, in modo verificabile;
-- "correction": la versione corretta, pronta da copiare (LaTeX con $...$);
-- "severity": "errore" se sei certo che sia sbagliato, "dubbio" se è sospetto ma non ne sei certo.
+- "problem": cosa non va e perché, in italiano, in modo verificabile e breve;
+- "correction": la versione corretta, in breve;
+- "severity": "errore" se sei certo che sia sbagliato, "dubbio" se è sospetto ma non ne sei certo;
+- "edits": solo per gli errori (per i dubbi lascia []), le modifiche che lo correggono nella nota. Ogni modifica è "find" (brano copiato ESATTAMENTE dalla nota, carattere per carattere, abbastanza lungo da comparire una volta sola) e "replace" (il brano corretto). Correggi anche le altre occorrenze dello stesso errore (flashcard, quiz, tabelle, riepiloghi). Cambia il minimo indispensabile, mantieni lingua, tono e formattazione (LaTeX con $...$ e $$...$$, callout con "> " a inizio riga, wikilink [[...]]); se serve un passaggio nuovo in una dimostrazione, scrivilo nello stile dei passaggi vicini.
 Se non trovi problemi restituisci "issues": [].
 
 === NOTA ===
 {note}
 === FINE NOTA ==="""
 
-FIX_SCHEMA = {
+CHECK_MODEL = "gemini-3.8-flash-medium"
+CHECK_SCHEMA = {
     "type": "object",
     "properties": {
-        "edits": {
+        "results": {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"find": {"type": "string"}, "replace": {"type": "string"}},
-                "required": ["find", "replace"],
+                "properties": {"n": {"type": "integer"}, "ok": {"type": "boolean"}, "reason": {"type": "string"}},
+                "required": ["n", "ok", "reason"],
             },
-        },
-        "skipped": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"quote": {"type": "string"}, "reason": {"type": "string"}},
-                "required": ["quote", "reason"],
-            },
-        },
+        }
     },
-    "required": ["edits", "skipped"],
+    "required": ["results"],
 }
 
-FIX_PROMPT = """Sei un revisore matematico. Un collega ha trovato gli ERRORI elencati sotto nella nota di studio che segue. Correggili con modifiche di testo mirate.
+CHECK_PROMPT = """Sei un revisore matematico. In una nota di studio sono state fatte le correzioni elencate sotto. Per ognuna controlla che il testo nuovo sia matematicamente corretto, risolva il problema indicato e non introduca errori nuovi. Rispondi con "results": per ogni correzione il suo numero "n", "ok" (true se va bene) e "reason" (breve, in italiano).
 
-Regole:
-- Correggi SOLO gli errori elencati, e ogni altra occorrenza dello stesso errore nella nota (flashcard, quiz, tabelle, riepiloghi). Non migliorare, non riformulare, non accorciare nient'altro.
-- Ogni modifica è una coppia "find" / "replace": "find" è un brano copiato ESATTAMENTE dalla nota, carattere per carattere, abbastanza lungo da comparire una volta sola; "replace" è il brano corretto.
-- Mantieni lingua, tono e formattazione della nota: LaTeX con $...$ e $$...$$, callout di Obsidian (righe che iniziano con "> "), wikilink puri [[...]] senza apici né backtick, nessuna emoji, nessun riferimento a lezioni o capitoli, niente \\vline.
-- Dentro blocchi di dati (JSON, codice) mantieni la sintassi valida e lo stesso modo di scrivere il LaTeX del resto del blocco.
-- Se per correggere una dimostrazione serve un passaggio nuovo, scrivilo nello stesso stile dei passaggi vicini, con la sua giustificazione.
-- Se ritieni che una segnalazione sia sbagliata, non toccare il testo e mettila in "skipped" con il motivo.
-
-=== ERRORI DA CORREGGERE ===
-{issues}
-=== FINE ERRORI ===
-
-=== NOTA ===
-{note}
-=== FINE NOTA ==="""
-
+{fixes}"""
 
 def strip_block(text: str) -> str:
     return BLOCK_RE.sub("", text)
@@ -163,7 +147,7 @@ def quota_wait(text: str) -> Optional[int]:
     return h * 3600 + mi * 60 + se
 
 
-def ask_agy(prompt: str, schema: Dict[str, Any], model: str = "", timeout_sec: int = 900, attempts: int = 3) -> Optional[Dict[str, Any]]:
+def ask_agy(prompt: str, schema: Dict[str, Any], model: str = "", timeout_sec: int = 600, attempts: int = 2) -> Optional[Dict[str, Any]]:
     """Come ask_agy_once, ma riprova quando agy torna vuoto (strumento negato in headless, timeout a metà turno)
     e, a quota esaurita, aspetta il reset invece di far fallire le note che restano."""
     n, waited = 0, 0
@@ -186,7 +170,7 @@ def ask_agy(prompt: str, schema: Dict[str, Any], model: str = "", timeout_sec: i
     return None
 
 
-def ask_agy_once(prompt: str, schema: Dict[str, Any], model: str = "", timeout_sec: int = 900) -> Optional[Dict[str, Any]]:
+def ask_agy_once(prompt: str, schema: Dict[str, Any], model: str = "", timeout_sec: int = 600) -> Optional[Dict[str, Any]]:
     """agy in print mode con output vincolato allo schema (come orchestrator.run_agy_structured), quota di Antigravity."""
     agy = shutil.which("agy") or str(Path.home() / ".local/bin/agy")
     cmd = [
@@ -199,11 +183,20 @@ def ask_agy_once(prompt: str, schema: Dict[str, Any], model: str = "", timeout_s
     try:
         RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         # Cartella neutra: il revisore lavora solo sul testo del prompt, non sul vault
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec + 60, check=False, cwd=str(RUNTIME_DIR))
-    except (subprocess.TimeoutExpired, OSError) as e:
-        sys.stderr.write(f"[Correttezza] agy non ha risposto: {e}\n")
+        # Gruppo di processi proprio: agy è un wrapper, e al timeout va fermato anche il figlio, che altrimenti
+        # resta vivo per ore a consumare quota
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(RUNTIME_DIR), start_new_session=True)
+    except OSError as e:
+        sys.stderr.write(f"[Correttezza] agy non parte: {e}\n")
         return None
-    out = (proc.stdout or "").strip()
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_sec + 30)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        sys.stderr.write(f"[Correttezza] agy non ha risposto in {timeout_sec}s\n")
+        return None
+    out = (stdout or "").strip()
     for candidate in [out] + [l for l in reversed(out.splitlines()) if l.strip().startswith("{")]:
         try:
             data = json.loads(candidate)
@@ -216,10 +209,10 @@ def ask_agy_once(prompt: str, schema: Dict[str, Any], model: str = "", timeout_s
                 return json.loads(data["response"])
             except Exception:
                 pass
-    wait = quota_wait(out + (proc.stderr or ""))
+    wait = quota_wait(out + (stderr or ""))
     if wait is not None:
         raise QuotaExhausted(wait)
-    sys.stderr.write(f"[Correttezza] Output di agy non interpretabile: {out[:300]} {(proc.stderr or '')[:300]}\n")
+    sys.stderr.write(f"[Correttezza] Output di agy non interpretabile: {out[:300]} {(stderr or '')[:300]}\n")
     return None
 
 
@@ -230,34 +223,59 @@ def find_issues(note: str, model: str = "") -> Optional[List[Dict[str, Any]]]:
     return [i for i in out["issues"] if isinstance(i, dict) and str(i.get("problem", "")).strip()]
 
 
-FIX_BATCH = 4
+def clean_edit(edit: Any) -> Optional[Tuple[str, str]]:
+    if not isinstance(edit, dict):
+        return None
+    find, replace = str(edit.get("find", "")), str(edit.get("replace", ""))
+    # Nei callout il modello tende a ripetere il "> " iniziale che "find" non include: diventerebbe un callout annidato
+    if replace.startswith("> ") and not find.startswith(">"):
+        replace = replace[2:]
+    return (find, replace) if find and find != replace else None
 
 
-def fix_errors(note: str, errors: List[Dict[str, Any]], model: str = "") -> Tuple[str, int]:
-    """A gruppi di FIX_BATCH errori: con tanti errori in una volta agy supera il timeout."""
-    applied = 0
-    for start in range(0, len(errors), FIX_BATCH):
-        note, n = fix_batch(note, errors[start:start + FIX_BATCH], model=model)
-        applied += n
+def locate(note: str, find: str) -> Optional[Tuple[int, int]]:
+    """Dove sta "find" nella nota, se compare una sola volta. Se il modello lo ha copiato su più righe di un
+    callout senza i "> " iniziali (o con spazi diversi), lo cerca anche ignorando spazi, a capo e "> "."""
+    if note.count(find) == 1:
+        i = note.index(find)
+        return i, i + len(find)
+    tokens = [re.escape(t) for t in re.split(r"(?:\s|(?<![^\s])>)+", find.strip()) if t]
+    if not tokens:
+        return None
+    matches = list(re.finditer(r"(?:\s|>)+".join(tokens), note))
+    return (matches[0].start(), matches[0].end()) if len(matches) == 1 else None
+
+
+def apply_edits(note: str, issue: Dict[str, Any]) -> Optional[Tuple[str, List[Tuple[str, str]]]]:
+    """Tutte le modifiche di un errore o nessuna: ogni "find" deve comparire una sola volta."""
+    edits = [e for e in (clean_edit(x) for x in issue.get("edits") or []) if e]
+    if not edits:
+        return None
+    applied = []
+    for find, replace in edits:
+        span = locate(note, find)
+        if not span:
+            return None
+        old = note[span[0]:span[1]]
+        # Dentro un callout ogni riga nuova deve ricominciare con "> "
+        if "\n>" in old:
+            replace = re.sub(r"\n(?!>)", "\n> ", replace)
+        note = note[:span[0]] + replace + note[span[1]:]
+        applied.append((old, replace))
     return note, applied
 
 
-def fix_batch(note: str, errors: List[Dict[str, Any]], model: str = "") -> Tuple[str, int]:
-    """Applica le correzioni proposte; ogni "find" deve comparire una sola volta, altrimenti la modifica è scartata."""
+def check_fixes(fixed: List[Dict[str, Any]]) -> Optional[set]:
+    """Numeri (da 1) delle correzioni che il controllo boccia; None se il controllo non risponde."""
     listed = "\n\n".join(
-        f"{n}. In: «{e.get('quote', '')}»\nProblema: {e.get('problem', '')}\nCorrezione suggerita: {e.get('correction', '')}"
-        for n, e in enumerate(errors, 1)
+        f"{n}. Problema: {i.get('problem', '')}\n"
+        + "\n".join(f"Prima: «{f}»\nDopo: «{r}»" for f, r in i["applied"])
+        for n, i in enumerate(fixed, 1)
     )
-    out = ask_agy(FIX_PROMPT.replace("{issues}", listed).replace("{note}", note), FIX_SCHEMA, model=model)
-    applied = 0
-    for edit in (out or {}).get("edits") or []:
-        find, replace = str(edit.get("find", "")), str(edit.get("replace", ""))
-        # Nei callout il modello tende a ripetere il "> " iniziale che "find" non include: diventerebbe un callout annidato
-        if replace.startswith("> ") and not find.startswith(">"):
-            replace = replace[2:]
-        if find and find != replace and note.count(find) == 1:
-            note, applied = note.replace(find, replace), applied + 1
-    return note, applied
+    out = ask_agy(CHECK_PROMPT.replace("{fixes}", listed), CHECK_SCHEMA, model=CHECK_MODEL, timeout_sec=300)
+    if out is None or not isinstance(out.get("results"), list):
+        return None
+    return {r.get("n") for r in out["results"] if isinstance(r, dict) and r.get("ok") is False}
 
 
 def backup(path: Path, text: str) -> None:
@@ -294,7 +312,7 @@ def render_block(issues: List[Dict[str, Any]]) -> str:
     parts = [
         START,
         f"> [!warning] Verifica di correttezza: {counts}",
-        "> Segnalazioni di un secondo modello da controllare. Il testo della nota non è stato modificato.",
+        "> Segnalazioni di un secondo modello da controllare: in questi punti il testo della nota non è stato corretto.",
     ]
     for n, i in enumerate(issues, 1):
         label = "Errore" if i.get("severity") == "errore" else "Dubbio"
@@ -324,39 +342,52 @@ def apply_result(text: str, issues: List[Dict[str, Any]], fixed: int = 0) -> str
     return head + "\n" + (render_block(issues) if issues else "") + rest
 
 
-def check_note(path: Path, model: str = "", fix: bool = False, rounds: int = 2) -> Dict[str, Any]:
+def check_note(path: Path, model: str = "", fix: bool = False) -> Dict[str, Any]:
     text = path.read_text(encoding="utf-8", errors="replace")
     if is_moc(text):
         return {"status": "skipped", "reason": "MOC"}
-    note = strip_block(text)
-    issues = find_issues(note, model=model)
+    original = strip_block(text)
+    issues = find_issues(original, model=model)
     if issues is None:
         return {"status": "error"}
-    fixed = 0
-    for _ in range(rounds if fix else 0):
-        errors = [i for i in issues if i.get("severity") == "errore"]
-        if not errors:
-            break
-        corrected, applied = fix_errors(note, errors, model=model)
-        if not applied:
-            break
-        recheck = find_issues(corrected, model=model)
-        if recheck is None:
-            break
-        note, issues, fixed = corrected, recheck, fixed + applied
+    note, fixed, remaining = original, [], []
+    for issue in issues:
+        done = apply_edits(note, issue) if fix and issue.get("severity") == "errore" else None
+        if done:
+            note, issue["applied"] = done
+            fixed.append(issue)
+        else:
+            remaining.append(issue)
+    if fixed:
+        rejected = check_fixes(fixed)
+        # Senza conferma non si tocca niente: meglio un errore segnalato che una correzione sbagliata
+        if rejected is None:
+            rejected = set(range(1, len(fixed) + 1))
+        if rejected:
+            note = original
+            kept = [i for n, i in enumerate(fixed, 1) if n not in rejected]
+            remaining += [i for n, i in enumerate(fixed, 1) if n in rejected]
+            fixed = []
+            for issue in kept:
+                done = apply_edits(note, issue)
+                if done:
+                    note = done[0]
+                    fixed.append(issue)
+                else:
+                    remaining.append(issue)
     # La nota potrebbe essere cambiata durante la verifica (minuti): riscrivi solo se è ancora quella
     if path.read_text(encoding="utf-8", errors="replace") != text:
         return {"status": "error", "reason": "nota modificata durante la verifica"}
     if fixed:
         backup(path, text)
-    path.write_text(apply_result(note, issues, fixed), encoding="utf-8")
+    path.write_text(apply_result(note, remaining, len(fixed)), encoding="utf-8")
     if fixed:
         try:
             resync_anki(path)
         except Exception:
             pass
-    errors = sum(1 for i in issues if i.get("severity") == "errore")
-    return {"status": "checked", "errors": errors, "doubts": len(issues) - errors, "fixed": fixed}
+    errors = sum(1 for i in remaining if i.get("severity") == "errore")
+    return {"status": "checked", "errors": errors, "doubts": len(remaining) - errors, "fixed": len(fixed)}
 
 
 def summary(report: Dict[str, Any]) -> str:

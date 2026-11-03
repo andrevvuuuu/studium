@@ -645,7 +645,7 @@ const HUD_PHASES = [
     { key: "sources", label: "Lettura delle fonti", weight: 90 },
     { key: "context", label: "Collegamenti e istruzioni", weight: 15 },
     { key: "writing", label: "Scrittura", weight: 300 },
-    { key: "verify", label: "Verifica (fonti e correttezza)", weight: 380 },
+    { key: "verify", label: "Verifica (fonti)", weight: 380 },
     { key: "final", label: "Rifinitura", weight: 10 },
 ];
 const HUD_PHASE_ORDER = HUD_PHASES.map(p => p.key);

@@ -4244,8 +4244,9 @@ def post_process_job(vault_root: Path, job_file: Path) -> int:
         job_file.write_text(json.dumps(job_data, indent=2, ensure_ascii=False), encoding="utf-8")
         sys.stdout.write(f"[PostProcess] {summary}\n")
 
-    # Verifica di correttezza con un secondo modello (via agy): corregge gli errori certi, segnala i dubbi
-    if op_type in ("normal", "edit") and (vault_root / target_rel).exists():
+    # Verifica di correttezza con un secondo modello (via agy): spenta di default, costa troppa quota (minuti e
+    # due chiamate per nota). Resta nel menu per una nota alla volta; ANTIGRAVITY_VERIFY_AUTO=1 la riaccende qui.
+    if os.environ.get("ANTIGRAVITY_VERIFY_AUTO") == "1" and op_type in ("normal", "edit") and (vault_root / target_rel).exists():
         update_status(
             vault_root=vault_root, percent=98, step_number=6, total_steps=6,
             message="🔎 Verifica e correzione (secondo modello via agy)...",

@@ -16,6 +16,16 @@
 3. **LaTeX Standard e Igiene dei Dollari:**
    - Tutte le variabili e le formule matematiche devono essere racchiuse in simboli del dollaro: `$x \in \mathbb{R}$` per il testo inline, `$$ ... $$` per le formule centrate su blocco separato.
    - Mai inserire [[wikilink]] dentro un blocco LaTeX.
+4. **Espandere sì, inventare no (correttezza delle aggiunte):**
+   Spiegazioni, riformulazioni e passaggi completati sono obbligatori, ma sono proprio le parti in cui nascono gli errori: le fonti del professore sono corrette, i tuoi completamenti no per definizione. Le verifiche del novembre 2026 su 39 note di Analisi hanno trovato diversi errori in quasi ogni nota, quasi tutti di questi tipi. Per ognuno vale la regola accanto:
+   - **Ipotesi perse o indebolite** (manca la continuità nella permanenza del segno, il caso $\beta = 0$, il caso $y \le 0$, termini non negativi per scrivere $\sum a_k < +\infty$, punto di accumulazione): copia le ipotesi di ogni definizione e teorema esattamente come nelle fonti; quando riformuli o decodifichi, ogni ipotesi deve restare, con le stesse disuguaglianze (strette o larghe).
+   - **Generalizzazioni indebite** ("si estende a qualsiasi base", "vale unicamente in", "ogni funzione periodica ha un minimo periodo"): non estendere un risultato oltre ciò che le fonti dimostrano. Se aggiungi un'estensione, deve avere la sua dimostrazione o restare fuori.
+   - **Passaggi completati sbagliati** (indice del primo termine di un blocco, costante persa in una catena di disuguaglianze, stretto al posto di largo, caso $n = 1$ dove vale l'uguaglianza): ogni passaggio che aggiungi cita la sua giustificazione (definizione, ipotesi, teorema con le ipotesi verificate). Distingui sempre i casi limite: segno, zero, estremi dell'intervallo, primo indice, parametri nulli.
+   - **Ragionamenti circolari**: non usare il risultato che stai dimostrando, né uno che nelle fonti viene dimostrato a partire da esso.
+   - **Nomi sbagliati** ("funzione esponenziale inversa" per $e^{1/x}$, "iperbolica" per $1/x$, "differenza" per una somma): usa solo la terminologia standard o quella delle fonti; non inventare etichette.
+   - **Collegamenti fuori programma** (Heine-Borel, Cauchy-Lipschitz, teorema fondamentale del calcolo via carabinieri): un collegamento a un argomento che non è nelle fonti si nomina con un wikilink, senza enunciarlo né dimostrarlo a memoria.
+   - **Quiz incoerenti** (spiegazione che cita la lettera sbagliata, distrattore che è in realtà corretto, opzione che viola le ipotesi della domanda): per ogni quiz calcola prima la risposta giusta, poi costruisci i distrattori controllando che ognuno sia davvero sbagliato; la lettera in `**CORRECT:**` e quella citata in `**EXPLANATION:**` devono coincidere.
+   Prima di chiudere la nota rileggi una volta le dimostrazioni, gli esempi numerici e i quiz con queste regole: è il controllo che costa meno, perché avviene mentre scrivi.
 
 ---
 

@@ -80,3 +80,74 @@ class TestState(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReconcile(unittest.TestCase):
+    def setUp(self):
+        from tutor import reconcile  # noqa: F401
+        self.vault = Path(tempfile.mkdtemp())
+        (self.vault / "Matematica").mkdir()
+
+    def state(self):
+        return {"recupero": True, "courses": [{"id": "algebra", "lessons": [{"date": "2026-10-02", "items": [
+            {"status": "da_creare", "concept": "Bézout", "title": "Identità di Bézout", "reason": "r"},
+            {"status": "da_completare", "concept": "MCD", "note": "Massimo Comune Divisore", "missing": "unicità", "reason": "r"}]}]}]}
+
+    def test_created_note_becomes_covered(self):
+        from tutor import reconcile
+        (self.vault / "Matematica" / "Identità di Bézout.md").write_text("# B\n")
+        item = reconcile(self.state(), self.vault, "2026-11-03")["courses"][0]["lessons"][0]["items"][0]
+        self.assertEqual((item["status"], item["note"]), ("coperto", "Identità di Bézout"))
+
+    def test_completed_note_is_recognized_by_its_lessons_frontmatter(self):
+        from tutor import reconcile
+        mcd = self.vault / "Matematica" / "Massimo Comune Divisore.md"
+        mcd.write_text("---\nLezioni:\n  - 2026-10-21\n---\n# MCD\n")
+        self.assertEqual(reconcile(self.state(), self.vault, "2026-11-03")["courses"][0]["lessons"][0]["items"][1]["status"], "da_completare")
+        mcd.write_text("---\nLezioni:\n  - 2026-10-02\n---\n# MCD\n")
+        self.assertEqual(reconcile(self.state(), self.vault, "2026-11-03")["courses"][0]["lessons"][0]["items"][1]["status"], "coperto")
+
+    def test_recupero_recomputed(self):
+        from tutor import reconcile
+        (self.vault / "Matematica" / "Identità di Bézout.md").write_text("# B\n")
+        (self.vault / "Matematica" / "Massimo Comune Divisore.md").write_text("---\nLezioni:\n  - 2026-10-02\n---\n")
+        self.assertFalse(reconcile(self.state(), self.vault, "2026-11-03")["recupero"])
+
+
+class TestRun(unittest.TestCase):
+    def setUp(self):
+        import tutor
+        self.t = tutor
+        self.dir = Path(tempfile.mkdtemp())
+        self.saved = {k: getattr(tutor, k) for k in ("TUTOR_DIR", "STORE", "STATE", "LOCK", "read_course", "analyze", "VAULT")}
+        tutor.TUTOR_DIR, tutor.STORE, tutor.STATE, tutor.LOCK = self.dir, self.dir / "lessons.jsonl", self.dir / "state.json", self.dir / "tutor.lock"
+        tutor.VAULT = self.dir
+        (self.dir / "courses.json").write_text(json.dumps([
+            {"id": "algebra", "nome": "Algebra", "moc": "a.md", "start_year": 2026, "fonte": {"tipo": "x"}},
+            {"id": "analisi", "nome": "Analisi", "moc": "b.md", "start_year": 2026, "fonte": {"tipo": "x"}}]))
+        tutor.read_course = lambda c: ([Lesson(c.id, "2026-10-02", f"lezione di {c.id}", "x"), Lesson(c.id, "2026-10-05", f"seconda di {c.id}", "x")], [], [])
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            setattr(self.t, k, v)
+
+    def test_one_course_crashing_does_not_lose_the_other_and_state_is_written(self):
+        def analyze(c, lessons, vault):
+            if c.id == "analisi":
+                raise FileNotFoundError("b.md")
+            return [{"date": "2026-10-02", "items": []}, {"date": "2026-10-05", "items": []}]
+        self.t.analyze = analyze
+        self.t.run(force=True)
+        st = json.loads(self.t.STATE.read_text())
+        self.assertIn("b.md", next(c for c in st["courses"] if c["id"] == "analisi")["errore"])
+        self.assertEqual(len(next(c for c in st["courses"] if c["id"] == "algebra")["lessons"]), 2)
+        self.assertTrue(st["last_run_day"])
+        from tutor_store import pending
+        self.assertEqual(pending(self.t.STORE, "algebra"), [])
+        self.assertEqual(len(pending(self.t.STORE, "analisi")), 2)
+
+    def test_lessons_missing_from_agy_answer_stay_pending(self):
+        self.t.analyze = lambda c, lessons, vault: [{"date": "2026-10-02", "items": []}]
+        self.t.run(force=True)
+        from tutor_store import pending
+        self.assertEqual([l.date for l in pending(self.t.STORE, "algebra")], ["2026-10-05"])

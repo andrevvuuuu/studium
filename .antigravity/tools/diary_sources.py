@@ -117,9 +117,15 @@ def handle_gmail_response(data, course: str, start_year: int) -> List[Lesson]:
     return parse_forum_messages(data, course, start_year)
 
 
-def read_gmail_forum(secrets: Dict[str, str], course: str, start_year: int) -> List[Lesson]:
-    import json
+def gmail_request_url(secrets: Dict[str, str], corso: str) -> str:
+    """Il codice e il nome del corso: lo script Google tiene solo le email di Moodle che citano quel corso."""
     import urllib.parse
-    url = secrets["gmail_url"] + ("&" if "?" in secrets["gmail_url"] else "?") + urllib.parse.urlencode({"key": secrets.get("gmail_key", "")})
+    base = secrets["gmail_url"]
+    return base + ("&" if "?" in base else "?") + urllib.parse.urlencode({"key": secrets.get("gmail_key", ""), "corso": corso})
+
+
+def read_gmail_forum(secrets: Dict[str, str], course: str, start_year: int, corso: str = "") -> List[Lesson]:
+    import json
+    url = gmail_request_url(secrets, corso)
     with urllib.request.urlopen(url, timeout=20) as resp:
         return handle_gmail_response(json.loads(resp.read().decode("utf-8")), course, start_year)

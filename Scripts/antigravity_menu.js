@@ -1747,6 +1747,14 @@ async function runMocBatchFlow(tp, app, vaultBasePath) {
  * Avvia moc_batch.py su una config già pronta e mostra l'HUD del batch. Lo usano il menu e la barra del tutor.
  */
 function launchBatch(app, vaultBasePath, cfg) {
+    if (isBatchActive()) {
+        try { const { Notice } = require("obsidian"); new Notice("Un batch di Antigravity è già in corso: aspetta che finisca.", 5000); } catch (_) {}
+        return;
+    }
+    if (!cfg.notes || !cfg.notes.length) {
+        try { const { Notice } = require("obsidian"); new Notice("Nessuna nota da creare.", 4000); } catch (_) {}
+        return;
+    }
     const runtimeDir = getRuntimeDir();
     const batchScript = path.join(vaultBasePath, ".antigravity", "tools", "moc_batch.py");
     const cfgPath = path.join(runtimeDir, "batch-config.json");

@@ -19,6 +19,7 @@ module.exports = async function (tp) {
         const child = child_process.spawn("python3", [path.join(vaultBasePath, ".antigravity", "tools", "tutor.py")], {
             cwd: vaultBasePath, detached: true, stdio: "ignore", env
         });
+        child.on("error", (e) => console.log("[tutor] python3 non trovato", e));
         child.unref();
     } catch (e) {
         console.log("[tutor] avvio non riuscito", e);
@@ -27,4 +28,17 @@ module.exports = async function (tp) {
     if (window._agTutorWatching) return;
     window._agTutorWatching = true;
     fs.watchFile(statePath, { interval: 2000 }, () => render(app, vaultBasePath));
+    // Quando un batch o una modifica di Antigravity finisce, lo stato si riallinea ai file (nessuna AI)
+    const runtime = process.env.ANTIGRAVITY_RUNTIME_DIR || "/tmp/antigravity_runtime";
+    for (const f of ["batch-status.json", "job-status.json"]) {
+        fs.watchFile(path.join(runtime, f), { interval: 3000 }, (cur) => {
+            let st = {};
+            try { st = JSON.parse(fs.readFileSync(path.join(runtime, f), "utf8")); } catch (_) {}
+            if (["completed", "done", "error", "cancelled", "stopped", "paused"].includes(st.status)) {
+                const c = child_process.spawn("python3", [path.join(vaultBasePath, ".antigravity", "tools", "tutor.py"), "--reconcile"], { cwd: vaultBasePath, detached: true, stdio: "ignore", env });
+                c.on("error", () => {});
+                c.unref();
+            }
+        });
+    }
 };

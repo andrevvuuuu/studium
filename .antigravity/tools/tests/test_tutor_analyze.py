@@ -50,6 +50,26 @@ class TestValidate(unittest.TestCase):
         self.assertEqual(item["status"], "coperto")
         self.assertEqual(item["note"], "Massimo Comune Divisore")
 
+    def test_unknown_or_non_iso_dates_are_dropped(self):
+        raw = {"lessons": [{"date": "2 ottobre", "items": []}, {"date": "2026-10-26", "items": []}, {"date": "2026-12-01", "items": []}]}
+        self.assertEqual([l["date"] for l in validate(raw, NOTES, dates={"2026-10-26"})], ["2026-10-26"])
+
+    def test_non_dict_answer_is_empty(self):
+        self.assertEqual(validate(["x"], NOTES), [])
+
+    def test_planned_moc_title_is_used_and_any_vault_note_counts_as_existing(self):
+        notes = NOTES + [{"title": "Relazioni di Equivalenza e Partizioni", "aliases": [], "headings": [], "exists": False}]
+        raw = {"lessons": [{"date": "2026-10-07", "items": [
+            {"concept": "Relazione di equivalenza", "kind": "definizione", "status": "da_creare", "title": "relazioni di equivalenza e partizioni", "reason": "manca"},
+            {"concept": "Sommatoria", "kind": "concetto", "status": "da_creare", "title": "Sommatorie e Produttorie", "reason": "manca"}]}]}
+        items = validate(raw, notes, vault_titles={"sommatorie e produttorie": "Sommatorie e Produttorie"})[0]["items"]
+        self.assertEqual((items[0]["status"], items[0]["title"]), ("da_creare", "Relazioni di Equivalenza e Partizioni"))
+        self.assertEqual((items[1]["status"], items[1]["note"]), ("coperto", "Sommatorie e Produttorie"))
+
+    def test_prompt_lists_planned_titles(self):
+        notes = NOTES + [{"title": "Numeri Primi", "aliases": [], "headings": [], "exists": False}]
+        self.assertIn("Numeri Primi", build_prompt(COURSE, [LESSON], notes).split("PREVISTE")[1])
+
     def test_item_without_reason_is_dropped(self):
         raw = {"lessons": [{"date": "2026-10-26", "items": [{"concept": "X", "kind": "concetto", "status": "da_creare", "title": "X", "reason": ""}]}]}
         self.assertEqual(validate(raw, NOTES)[0]["items"], [])

@@ -84,7 +84,10 @@ function prepare(vaultBasePath, args) {
     });
 }
 
-async function act(app, vaultBasePath, kind, lesson) {
+async function act(app, vaultBasePath, kind, lesson, button) {
+    // Un clic solo: il secondo partirebbe mentre il primo prepara la config e lancerebbe un doppione
+    document.querySelectorAll(".ag-tutor-actions button").forEach(b => { b.disabled = true; });
+    if (button) button.textContent = "Avvio…";
     try {
         const menu = require(path.join(vaultBasePath, "Scripts", "antigravity_menu.js"));
         if (kind === "create") {
@@ -98,6 +101,7 @@ async function act(app, vaultBasePath, kind, lesson) {
         }
     } catch (e) {
         notice(`Tutor: ${e.message}`);
+        document.querySelectorAll(".ag-tutor-actions button").forEach(b => { b.disabled = false; });
     }
 }
 
@@ -161,12 +165,12 @@ function render(app, vaultBasePath) {
         const nComplete = l.items.filter(i => i.status === "da_completare").length;
         if (nCreate) {
             const b = el("button", "mod-cta", `Crea ${nCreate === 1 ? "1 nota" : nCreate + " note"}`);
-            b.addEventListener("click", () => act(app, vaultBasePath, "create", l));
+            b.addEventListener("click", () => act(app, vaultBasePath, "create", l, b));
             actions.appendChild(b);
         }
         if (nComplete) {
             const b = el("button", "", `Completa ${nComplete === 1 ? "1 nota" : nComplete + " note"}`);
-            b.addEventListener("click", () => act(app, vaultBasePath, "complete", l));
+            b.addEventListener("click", () => act(app, vaultBasePath, "complete", l, b));
             actions.appendChild(b);
         }
         if (l.hidden) {

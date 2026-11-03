@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const { view } = require("../tutor_bar.js");
+const { view } = require("../../../../Scripts/tutor_bar.js");
 
 const missing = (title) => ({ status: "da_creare", concept: title, title, reason: `manca ${title}` });
 const covered = { status: "coperto", concept: "U(Z_n)", note: "U(Z_n)", reason: "c'è" };

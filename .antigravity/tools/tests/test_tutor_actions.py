@@ -24,9 +24,25 @@ class TestMoc(unittest.TestCase):
         moc = "- [[Identità di Bézout]]\n"
         self.assertEqual(insert_after_in_moc(moc, "Identità di Bézout", None), moc)
 
-    def test_insert_without_anchor_goes_after_last_list_item(self):
-        moc = "# MOC\n\n- [[A]]\n- [[B]]\n\n## Raccordi\nTesto finale.\n"
-        self.assertEqual(insert_after_in_moc(moc, "C", "Inesistente"), "# MOC\n\n- [[A]]\n- [[B]]\n- [[C]]\n\n## Raccordi\nTesto finale.\n")
+    def test_prose_anchor_goes_at_end_of_its_section(self):
+        moc = ("## Gli Insiemi\nIl corso parte da [[Insiemi e Operazioni]] e arriva a [[Relazioni]].\n\n"
+               "```mermaid\nA --> B[\"[[Relazioni]]\"]\n```\n\n## I Numeri\nPoi [[Numeri Naturali]].\n")
+        self.assertEqual(insert_after_in_moc(moc, "Relazioni di Equivalenza", "Relazioni"),
+                         "## Gli Insiemi\nIl corso parte da [[Insiemi e Operazioni]] e arriva a [[Relazioni]].\n\n"
+                         "```mermaid\nA --> B[\"[[Relazioni]]\"]\n```\n\n- [[Relazioni di Equivalenza]]\n\n## I Numeri\nPoi [[Numeri Naturali]].\n")
+
+    def test_list_anchor_with_children_keeps_children_in_place(self):
+        moc = "## Divisibilità\n- [[MCD]]\n  - [[Euclide]]\n- [[Primi]]\n"
+        self.assertEqual(insert_after_in_moc(moc, "Bézout", "MCD"), "## Divisibilità\n- [[MCD]]\n  - [[Euclide]]\n- [[Bézout]]\n- [[Primi]]\n")
+
+    def test_without_anchor_never_lands_in_raccordo_section(self):
+        moc = "## Gli Insiemi\nTesto con [[A]].\n\n## Note e Paragrafi Collegati\n- [[Analisi 2 MOC]]\n"
+        self.assertEqual(insert_after_in_moc(moc, "C", "Inesistente"),
+                         "## Gli Insiemi\nTesto con [[A]].\n\n- [[C]]\n\n## Note e Paragrafi Collegati\n- [[Analisi 2 MOC]]\n")
+
+    def test_duplicate_check_ignores_case_and_anchors(self):
+        moc = "## X\nVedi [[identità di bézout#Enunciato]].\n"
+        self.assertEqual(insert_after_in_moc(moc, "Identità di Bézout", None), moc)
 
 
 class TestJobs(unittest.TestCase):
@@ -64,3 +80,22 @@ class TestFrontmatter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGuards(unittest.TestCase):
+    def test_job_running_only_for_live_running_job(self):
+        import os
+        from tutor import job_running
+        rt = Path(tempfile.mkdtemp())
+        self.assertFalse(job_running(rt))
+        (rt / "job-status.json").write_text(json.dumps({"status": "running", "pid": os.getpid()}))
+        self.assertTrue(job_running(rt))
+        (rt / "job-status.json").write_text(json.dumps({"status": "running", "pid": 999999}))
+        self.assertFalse(job_running(rt))
+        (rt / "job-status.json").write_text(json.dumps({"status": "completed", "pid": os.getpid()}))
+        self.assertFalse(job_running(rt))
+
+    def test_gmail_url_carries_key_and_course(self):
+        from diary_sources import gmail_request_url
+        url = gmail_request_url({"gmail_url": "https://script.google.com/macros/s/X/exec", "gmail_key": "k"}, "Analisi Matematica I")
+        self.assertEqual(url, "https://script.google.com/macros/s/X/exec?key=k&corso=Analisi+Matematica+I")

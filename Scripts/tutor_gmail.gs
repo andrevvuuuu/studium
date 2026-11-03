@@ -11,15 +11,19 @@
  * L'URL da solo non basta: senza il codice lo script risponde {"error":"forbidden"}.
  */
 const KEY = "CODICE_SEGRETO";
-const QUERY = '"Diario delle lezioni" newer_than:60d';
+const QUERY = 'from:uniroma1.it "Diario delle lezioni" newer_than:60d';
 
 function doGet(e) {
   if (!e || !e.parameter || e.parameter.key !== KEY) return json({ error: "forbidden" });
+  const corso = (e.parameter.corso || "").toLowerCase();
   const out = [];
   for (const thread of GmailApp.search(QUERY, 0, 100)) {
     for (const msg of thread.getMessages()) {
       const subject = msg.getSubject();
-      if (!/Lezione\s+del/i.test(subject)) continue;
+      if (!/Lezione\s+del/i.test(subject) || /^\s*(re|r):/i.test(subject)) continue;
+      // Solo le email di Moodle della Sapienza che citano il corso: niente forum omonimi di altri corsi né messaggi esterni
+      if (!/elearning\.uniroma1\.it|uniroma1\.it/i.test(msg.getFrom())) continue;
+      if (corso && (subject + " " + msg.getPlainBody()).toLowerCase().indexOf(corso) < 0) continue;
       out.push({ subject: subject, date: msg.getDate().toISOString(), body: cleanBody(msg.getPlainBody()) });
     }
   }

@@ -72,6 +72,8 @@ Raggruppa nella stessa voce i concetti che starebbero nella stessa nota. Non inv
 {lessons}
 === NOTE DEL CORSO (titolo · alias · sezioni) ===
 {notes}
+=== NOTE PREVISTE DAL PROGRAMMA, NON ANCORA SCRITTE (per "title" usa uno di questi titoli se è adatto) ===
+{planned}
 === FINE ==="""
 
 
@@ -116,19 +118,30 @@ def moc_notes(vault: Path, moc_rel: str) -> List[Dict[str, Any]]:
 def build_prompt(course: Course, lessons: List[Lesson], notes: List[Dict[str, Any]]) -> str:
     lesson_lines = "\n".join(f"[{l.date}] {l.text}" for l in lessons)
     note_lines = "\n".join(" · ".join([n["title"]] + n["aliases"] + n["headings"]) for n in notes if n["exists"])
-    return PROMPT.replace("{course}", course.nome).replace("{lessons}", lesson_lines).replace("{notes}", note_lines or "(nessuna)")
+    planned = "\n".join(n["title"] for n in notes if not n["exists"])
+    return (PROMPT.replace("{course}", course.nome).replace("{lessons}", lesson_lines).replace("{notes}", note_lines or "(nessuna)")
+            .replace("{planned}", planned or "(nessuna)"))
 
 
-def validate(raw: Dict[str, Any], notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Corregge ciò che agy non può sapere con certezza: le note esistenti sono solo quelle dell'elenco."""
-    existing: Dict[str, str] = {}
+def validate(raw: Any, notes: List[Dict[str, Any]], dates: Optional[set] = None,
+             vault_titles: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+    """Corregge ciò che agy non può sapere con certezza: esiste solo ciò che c'è davvero nel vault (anche fuori da
+    questo MOC), i titoli previsti dal programma si usano con la grafia del MOC, e valgono solo le date chieste."""
+    existing: Dict[str, str] = {norm(k): v for k, v in (vault_titles or {}).items()}
+    planned: Dict[str, str] = {}
     for n in notes:
         if n["exists"]:
             for name in [n["title"]] + n["aliases"]:
-                existing.setdefault(norm(name), n["title"])
+                existing[norm(name)] = n["title"]
+        else:
+            planned.setdefault(norm(n["title"]), n["title"])
+    if not isinstance(raw, dict):
+        return []
     out = []
     for lesson in raw.get("lessons") or []:
-        if not isinstance(lesson, dict) or not lesson.get("date"):
+        if not isinstance(lesson, dict) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(lesson.get("date", ""))):
+            continue
+        if dates is not None and lesson["date"] not in dates:
             continue
         items = []
         for it in lesson.get("items") or []:
@@ -149,8 +162,8 @@ def validate(raw: Dict[str, Any], notes: List[Dict[str, Any]]) -> List[Dict[str,
                     item["status"] = "coperto"
                     item["note"] = real
                     item.pop("title", None)
-                elif not item.get("title"):
-                    item["title"] = item.get("concept", "")
+                else:
+                    item["title"] = planned.get(norm(item.get("title", "")), item.get("title") or item.get("concept", ""))
             items.append(item)
         out.append({"date": lesson["date"], "items": items})
     return out
@@ -161,7 +174,8 @@ def analyze(course: Course, lessons: List[Lesson], vault: Path, ask: Callable[..
     raw = ask(build_prompt(course, lessons, notes), ANALYZE_SCHEMA, model=TUTOR_MODEL)
     if raw is None:
         return None
-    return validate(raw, notes)
+    vault_titles = {p.stem: p.stem for p in note_files(vault).values()}
+    return validate(raw, notes, dates={l.date for l in lessons}, vault_titles=vault_titles)
 
 
 def measure(course_id: str) -> None:
@@ -246,8 +260,6 @@ def build_state(courses: List[Course], analyses: Dict[str, List[Dict[str, Any]]]
         for l in analyses.get(c.id) or []:
             lessons[l["date"]] = l
         ordered = [lessons[d] for d in sorted(lessons)]
-        if any(it.get("status") == "da_creare" for l in ordered if l["date"] < cutoff for it in l["items"]):
-            recupero = True
         seen, all_exams = set(), []
         for e in c.esami + (exams.get(c.id) or []):
             key = (e["nome"], e["data"])
@@ -263,7 +275,41 @@ def build_state(courses: List[Course], analyses: Dict[str, List[Dict[str, Any]]]
         if c.id in errors:
             entry["errore"] = errors[c.id]
         out.append(entry)
-    return {"updated_at": today, "last_run_day": today, "courses": out, "recupero": recupero}
+    state = {"updated_at": today, "last_run_day": today, "courses": out}
+    state["recupero"] = is_recupero(state, today)
+    return state
+
+
+def note_lessons(text: str) -> List[str]:
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    block = re.search(r"(?m)^Lezioni:[ \t]*\n((?:[ \t]+-.*\n?)*)", m.group(1) + "\n") if m else None
+    return re.findall(r"-\s*['\"]?(\d{4}-\d{2}-\d{2})", block.group(1)) if block else []
+
+
+def is_recupero(state: Dict[str, Any], today: str) -> bool:
+    from datetime import date, timedelta
+    cutoff = (date.fromisoformat(today) - timedelta(days=RECUPERO_DAYS)).isoformat()
+    return any(it.get("status") == "da_creare" for c in state.get("courses") or [] for l in c.get("lessons") or []
+               if l.get("date", "") < cutoff for it in l.get("items") or [])
+
+
+def reconcile(state: Dict[str, Any], vault: Path, today: str) -> Dict[str, Any]:
+    """Allinea lo stato ai file, senza AI: una nota creata è coperta, una nota completata (Lezioni con la data
+    della lezione nel frontmatter) pure. Così la barra non ripropone ciò che è già fatto."""
+    files = note_files(vault)
+    for c in state.get("courses") or []:
+        for l in c.get("lessons") or []:
+            for it in l.get("items") or []:
+                if it.get("status") == "da_creare":
+                    path = files.get(norm(it.get("title", "")).lower()) or files.get((it.get("title") or "").lower())
+                    if path:
+                        it["status"], it["note"] = "coperto", path.stem
+                elif it.get("status") == "da_completare":
+                    path = files.get((it.get("note") or "").lower())
+                    if path and l.get("date") in note_lessons(path.read_text(encoding="utf-8", errors="replace")):
+                        it["status"] = "coperto"
+    state["recupero"] = is_recupero(state, today)
+    return state
 
 
 def write_state(path: Path, state: Dict[str, Any]) -> None:
@@ -285,11 +331,12 @@ def read_course(course: Course):
         if not secrets.get("gmail_url"):
             raise DiaryFormatError("script Google non ancora configurato")
         from diary_sources import read_gmail_forum
-        return read_gmail_forum(secrets, course.id, course.start_year), [], []
+        return read_gmail_forum(secrets, course.id, course.start_year, course.fonte.get("corso", "")), [], []
     raise DiaryFormatError(f"fonte sconosciuta: {tipo}")
 
 
-def run(force: bool = False) -> int:
+def run(force: bool = False, only_reconcile: bool = False) -> int:
+    """Una volta al giorno legge i diari e analizza le lezioni nuove; ogni volta allinea lo stato ai file (senza AI)."""
     from datetime import date
     from tutor_store import append_new, lesson_key, load_courses, mark_analyzed, pending
     today = date.today().isoformat()
@@ -297,27 +344,35 @@ def run(force: bool = False) -> int:
         previous = json.loads(STATE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         previous = {}
-    if not should_run(previous, today, force) or not acquire_lock(LOCK):
+    if not acquire_lock(LOCK):
         return 0
     try:
+        if only_reconcile or not should_run(previous, today, force):
+            if previous.get("courses"):
+                write_state(STATE, reconcile(previous, VAULT, today))
+            return 0
         courses = load_courses(TUTOR_DIR / "courses.json")
         analyses, forecasts, exams, errors = {}, {}, {}, {}
         for c in courses:
-            try:
-                done, forecasts[c.id], exams[c.id] = read_course(c)
-                append_new(STORE, done)
-            except Exception as e:  # una fonte giù non ferma le altre
-                errors[c.id] = str(e)
-            todo = pending(STORE, c.id)
-            if not todo:
-                continue
-            result = analyze(c, todo, VAULT)
-            if result is None:
-                errors[c.id] = "agy non ha risposto: riprovo domani"
-                continue
-            analyses[c.id] = result
-            mark_analyzed(STORE, [lesson_key(l) for l in todo])
-        write_state(STATE, build_state(courses, analyses, forecasts, exams, errors, today, previous))
+            try:  # un corso che si rompe (fonte giù, MOC rinominato, risposta strana) non ferma gli altri
+                try:
+                    done, forecasts[c.id], exams[c.id] = read_course(c)
+                    append_new(STORE, done)
+                except Exception as e:
+                    errors[c.id] = str(e)
+                todo = pending(STORE, c.id)
+                if not todo:
+                    continue
+                result = analyze(c, todo, VAULT)
+                if result is None:
+                    errors[c.id] = "agy non ha risposto: riprovo domani"
+                    continue
+                analyses[c.id] = result
+                answered = {l["date"] for l in result}
+                mark_analyzed(STORE, [lesson_key(l) for l in todo if l.date in answered])
+            except Exception as e:
+                errors[c.id] = f"analisi non riuscita: {e}"
+        write_state(STATE, reconcile(build_state(courses, analyses, forecasts, exams, errors, today, previous), VAULT, today))
         return 0
     finally:
         release_lock(LOCK)
@@ -331,27 +386,57 @@ LIST_ITEM_RE = re.compile(r"^(\s*)([-*+]|\d+[.)])\s")
 
 
 def insert_after_in_moc(moc_text: str, title: str, after: Optional[str]) -> str:
-    """Aggiunge [[title]] come voce di elenco subito dopo quella di [[after]] (stesso rientro e marcatore);
-    senza ancora, dopo l'ultima voce di elenco del MOC. Se il link c'è già, il MOC non cambia."""
-    if f"[[{title}]]" in moc_text or f"[[{title}|" in moc_text:
+    """Aggiunge [[title]] al MOC nel modulo della nota che la precede (le cartelle dei corsi seguono le sezioni
+    "## " del MOC): subito dopo la voce di elenco di [[after]] e dei suoi sotto-punti, oppure, se il MOC lì è in
+    prosa, come voce in fondo alla sua sezione. Senza ancora va in fondo all'ultima sezione che non sia di
+    raccordo (quelle finali la pipeline le ignora). Se il link c'è già, anche con altre maiuscole, nulla cambia."""
+    from vault_layout import RACCORDO_HEADINGS
+    link_re = lambda name: re.compile(r"\[\[" + re.escape(name) + r"(?:[|#][^\]]*)?\]\]", re.I)
+    if link_re(title).search(moc_text):
         return moc_text
     lines = moc_text.split("\n")
-    target = None
+    in_code, code = False, []
+    for line in lines:
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+            code.append(True)
+        else:
+            code.append(in_code)
+    headings = [i for i, l in enumerate(lines) if l.startswith("## ") and not code[i]]
+
+    def section_end(i: int) -> int:
+        nxt = [h for h in headings if h > i]
+        return nxt[0] if nxt else len(lines)
+
+    anchor = None
     if after:
-        for i, line in enumerate(lines):
-            if (f"[[{after}]]" in line or f"[[{after}|" in line) and LIST_ITEM_RE.match(line):
-                target = i
-                break
-    if target is None:
-        items = [i for i, line in enumerate(lines) if LIST_ITEM_RE.match(line)]
-        if not items:
-            return moc_text.rstrip("\n") + f"\n- [[{title}]]\n"
-        target = items[-1]
-    m = LIST_ITEM_RE.match(lines[target])
-    indent, marker = m.group(1), m.group(2)
-    if marker[0].isdigit():
-        marker = "-"
-    lines.insert(target + 1, f"{indent}{marker} [[{title}]]")
+        rx = link_re(after)
+        anchor = next((i for i, l in enumerate(lines) if not code[i] and rx.search(l)), None)
+    if anchor is not None and LIST_ITEM_RE.match(lines[anchor]):
+        m = LIST_ITEM_RE.match(lines[anchor])
+        indent, marker = m.group(1), m.group(2)
+        if marker[0].isdigit():
+            marker = "-"
+        j = anchor + 1
+        while j < len(lines) and lines[j].strip() and len(lines[j]) - len(lines[j].lstrip()) > len(indent):
+            j += 1
+        lines.insert(j, f"{indent}{marker} [[{title}]]")
+        return "\n".join(lines)
+    if anchor is not None:
+        end = section_end(anchor)
+    else:
+        body = [h for h in headings if not RACCORDO_HEADINGS.search(lines[h])]
+        first_raccordo = next((h for h in headings if RACCORDO_HEADINGS.search(lines[h])), None)
+        if body:
+            last = max(h for h in body if first_raccordo is None or h < first_raccordo) if any(first_raccordo is None or h < first_raccordo for h in body) else body[-1]
+            end = section_end(last)
+        else:
+            end = first_raccordo if first_raccordo is not None else len(lines)
+    k = end
+    while k > 0 and not lines[k - 1].strip():
+        k -= 1
+    block = [f"- [[{title}]]"] if k > 0 and LIST_ITEM_RE.match(lines[k - 1]) else ["", f"- [[{title}]]"]
+    lines[k:k] = block
     return "\n".join(lines)
 
 
@@ -418,8 +503,22 @@ def write_batch_config(course_id: str, date: str) -> Path:
     return out
 
 
+def job_running(runtime: Path) -> bool:
+    """C'è un job di Antigravity vivo? Allora current-job.json è suo e non va sovrascritto."""
+    try:
+        st = json.loads((runtime / "job-status.json").read_text(encoding="utf-8"))
+        if st.get("status") != "running" or not st.get("pid"):
+            return False
+        os.kill(int(st["pid"]), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def write_edit_config(course_id: str, date: str, note_title: str) -> Path:
     import moc_batch
+    if job_running(moc_batch.RUNTIME_DIR):
+        raise SystemExit("Antigravity sta già lavorando a una nota: riprova quando ha finito")
     state = json.loads(STATE.read_text(encoding="utf-8"))
     path = note_files(VAULT).get(note_title.lower())
     if not path:
@@ -440,6 +539,7 @@ def main() -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Tutor delle lezioni: diari, analisi con agy, stato per la barra.")
     ap.add_argument("--force", action="store_true", help="Esegui anche se oggi è già stato fatto")
+    ap.add_argument("--reconcile", action="store_true", help="Solo allinea lo stato ai file (nessuna AI)")
     ap.add_argument("--measure", metavar="COURSE", help="Costo reale di una chiamata sull'ultima lezione del corso")
     ap.add_argument("--batch-config", nargs=2, metavar=("COURSE", "DATE"), help="Prepara la creazione delle note di una lezione")
     ap.add_argument("--edit-config", nargs=3, metavar=("COURSE", "DATE", "NOTE"), help="Prepara il completamento di una nota")
@@ -453,7 +553,7 @@ def main() -> int:
     if args.measure:
         measure(args.measure)
         return 0
-    return run(force=args.force)
+    return run(force=args.force, only_reconcile=args.reconcile)
 
 
 if __name__ == "__main__":

@@ -4192,6 +4192,23 @@ def write_moc_notebooks_frontmatter(moc_path: Path, notebooks: List[Dict[str, st
     return True
 
 
+def add_lessons_frontmatter(text: str, dates: List[str]) -> str:
+    """Aggiunge le date delle lezioni (tutor) alla proprietà lista "Lezioni" del frontmatter, senza duplicati."""
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        return "---\nLezioni:\n" + "".join(f"  - {d}\n" for d in sorted(set(dates))) + "---\n" + text
+    fm = m.group(1)
+    block = re.search(r"(?m)^Lezioni:[ \t]*\n((?:[ \t]+-.*\n?)*)", fm + "\n")
+    existing = re.findall(r"-\s*(\S+)", block.group(1)) if block else []
+    values = "".join(f"  - {d}\n" for d in sorted(set(existing) | set(dates)))
+    if block:
+        fm = (fm + "\n")[:block.start()] + "Lezioni:\n" + values + (fm + "\n")[block.end():]
+        fm = fm.rstrip("\n")
+    else:
+        fm = fm + "\nLezioni:\n" + values.rstrip("\n")
+    return "---\n" + fm + "\n---\n" + text[m.end():]
+
+
 def post_process_job(vault_root: Path, job_file: Path) -> int:
     """Eseguito da run_job.sh dopo che l'agente ha finito di scrivere: metadati MOC + verifica di esclusività."""
     try:
@@ -4243,6 +4260,11 @@ def post_process_job(vault_root: Path, job_file: Path) -> int:
         job_data["grounding_summary"] = summary
         job_file.write_text(json.dumps(job_data, indent=2, ensure_ascii=False), encoding="utf-8")
         sys.stdout.write(f"[PostProcess] {summary}\n")
+
+    # Tutor delle lezioni: la nota ricorda in quali lezioni è stata trattata
+    if job_data.get("lessons") and op_type in ("normal", "edit") and (vault_root / target_rel).exists():
+        note_path = vault_root / target_rel
+        note_path.write_text(add_lessons_frontmatter(note_path.read_text(encoding="utf-8"), job_data["lessons"]), encoding="utf-8")
 
     # Verifica di correttezza con un secondo modello (via agy): spenta di default, costa troppa quota (minuti e
     # due chiamate per nota). Resta nel menu per una nota alla volta; ANTIGRAVITY_VERIFY_AUTO=1 la riaccende qui.

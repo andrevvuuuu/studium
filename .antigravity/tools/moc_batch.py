@@ -358,6 +358,9 @@ def build_job(cfg: Dict[str, Any], note: Dict[str, Any], vault_root: Path) -> Di
         "allow_base_knowledge": allow_base,
         "syllabus_text": "",
         "syllabus_files": [],
+        # Dal tutor: il diario della lezione come guida e la data per il frontmatter "Lezioni"
+        "syllabus_diary_text": note.get("diary", ""),
+        "lessons": note.get("lessons", []),
         "notebook_id": notebooks[0]["id"],
         "notebook_title": label,
         "notebooks": [nb["id"] for nb in notebooks],

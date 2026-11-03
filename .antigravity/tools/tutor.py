@@ -323,12 +323,133 @@ def run(force: bool = False) -> int:
         release_lock(LOCK)
 
 
+# ------------------------------------------------------------------------------
+# Pulsanti della barra: config per la pipeline esistente (moc_batch, modalità modifica)
+# ------------------------------------------------------------------------------
+
+LIST_ITEM_RE = re.compile(r"^(\s*)([-*+]|\d+[.)])\s")
+
+
+def insert_after_in_moc(moc_text: str, title: str, after: Optional[str]) -> str:
+    """Aggiunge [[title]] come voce di elenco subito dopo quella di [[after]] (stesso rientro e marcatore);
+    senza ancora, dopo l'ultima voce di elenco del MOC. Se il link c'è già, il MOC non cambia."""
+    if f"[[{title}]]" in moc_text or f"[[{title}|" in moc_text:
+        return moc_text
+    lines = moc_text.split("\n")
+    target = None
+    if after:
+        for i, line in enumerate(lines):
+            if (f"[[{after}]]" in line or f"[[{after}|" in line) and LIST_ITEM_RE.match(line):
+                target = i
+                break
+    if target is None:
+        items = [i for i, line in enumerate(lines) if LIST_ITEM_RE.match(line)]
+        if not items:
+            return moc_text.rstrip("\n") + f"\n- [[{title}]]\n"
+        target = items[-1]
+    m = LIST_ITEM_RE.match(lines[target])
+    indent, marker = m.group(1), m.group(2)
+    if marker[0].isdigit():
+        marker = "-"
+    lines.insert(target + 1, f"{indent}{marker} [[{title}]]")
+    return "\n".join(lines)
+
+
+def lesson_items(state: Dict[str, Any], course_id: str, date: str) -> List[Dict[str, Any]]:
+    for c in state.get("courses") or []:
+        if c.get("id") == course_id:
+            for l in c.get("lessons") or []:
+                if l.get("date") == date:
+                    return l.get("items") or []
+    return []
+
+
+def lesson_batch_notes(state: Dict[str, Any], course_id: str, date: str, diary: str) -> List[Dict[str, Any]]:
+    return [{"title": it["title"], "after": it.get("after"), "diary": diary, "lessons": [date]}
+            for it in lesson_items(state, course_id, date) if it.get("status") == "da_creare" and it.get("title")]
+
+
+def edit_job(state: Dict[str, Any], course_id: str, date: str, note_title: str, diary: str, target_rel: str,
+             base: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Job di modifica chirurgica; `base` porta i campi di NotebookLM e disciplina (moc_batch.build_job)."""
+    item = next((it for it in lesson_items(state, course_id, date) if it.get("note") == note_title), {})
+    return {
+        **(base or {}),
+        "operation": "edit", "operation_type": "edit", "operation_label": "Modifica / Migliora Nota Esistente",
+        "edit_mode": "surgical_prompt", "title": note_title, "topic": note_title,
+        "target_file_path": target_rel, "target_file_abs": str(VAULT / target_rel),
+        "user_instructions": f"Integra quanto fatto a lezione il {date}: {item.get('missing') or item.get('concept', '')}. "
+                             f"Testo del diario del professore: {diary}",
+        "lessons": [date], "status": "pending",
+    }
+
+
+def lesson_text(course_id: str, date: str) -> str:
+    from tutor_store import read_events
+    texts = [e["lesson"]["text"] for e in read_events(STORE) if "lesson" in e and e["lesson"]["course"] == course_id and e["lesson"]["date"] == date]
+    return texts[-1] if texts else ""
+
+
+def write_batch_config(course_id: str, date: str) -> Path:
+    """Inserisce nel MOC le note da creare della lezione e scrive la config di moc_batch (stesso formato del menu)."""
+    import moc_batch
+    from tutor_store import load_courses
+    course = next(c for c in load_courses(TUTOR_DIR / "courses.json") if c.id == course_id)
+    state = json.loads(STATE.read_text(encoding="utf-8"))
+    notes = lesson_batch_notes(state, course_id, date, lesson_text(course_id, date))
+    if not notes:
+        raise SystemExit("Nessuna nota da creare per questa lezione")
+    moc_path = VAULT / course.moc
+    text = moc_path.read_text(encoding="utf-8")
+    for n in notes:
+        text = insert_after_in_moc(text, n["title"], n.get("after"))
+    moc_path.write_text(text, encoding="utf-8")
+    plan = moc_batch.build_plan(VAULT, course.moc)
+    if plan.get("error"):
+        raise SystemExit(plan["error"])
+    wanted = {n["title"].lower(): n for n in notes}
+    cfg_notes = [dict(p, diary=wanted[p["title"].lower()]["diary"], lessons=wanted[p["title"].lower()]["lessons"])
+                 for p in plan["notes"] if p["title"].lower() in wanted]
+    cfg = {"moc": plan["moc"], "moc_name": plan["moc_name"], "discipline": plan["discipline"],
+           "allow_base_knowledge": False, "parallel": 2, "notes": cfg_notes}
+    out = moc_batch.RUNTIME_DIR / "tutor-batch-config.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out
+
+
+def write_edit_config(course_id: str, date: str, note_title: str) -> Path:
+    import moc_batch
+    state = json.loads(STATE.read_text(encoding="utf-8"))
+    path = note_files(VAULT).get(note_title.lower())
+    if not path:
+        raise SystemExit(f"Nota non trovata: {note_title}")
+    from tutor_store import load_courses
+    course = next(c for c in load_courses(TUTOR_DIR / "courses.json") if c.id == course_id)
+    plan = moc_batch.build_plan(VAULT, course.moc)
+    base = moc_batch.build_job({"discipline": plan["discipline"], "moc": course.moc},
+                               {"title": note_title, "notebooks": plan["moc_notebooks"]}, VAULT) if plan.get("moc_notebooks") else {}
+    job = edit_job(state, course_id, date, note_title, lesson_text(course_id, date), str(path.relative_to(VAULT)), base)
+    out = moc_batch.RUNTIME_DIR / "current-job.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out
+
+
 def main() -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Tutor delle lezioni: diari, analisi con agy, stato per la barra.")
     ap.add_argument("--force", action="store_true", help="Esegui anche se oggi è già stato fatto")
     ap.add_argument("--measure", metavar="COURSE", help="Costo reale di una chiamata sull'ultima lezione del corso")
+    ap.add_argument("--batch-config", nargs=2, metavar=("COURSE", "DATE"), help="Prepara la creazione delle note di una lezione")
+    ap.add_argument("--edit-config", nargs=3, metavar=("COURSE", "DATE", "NOTE"), help="Prepara il completamento di una nota")
     args = ap.parse_args()
+    if args.batch_config:
+        print(write_batch_config(*args.batch_config))
+        return 0
+    if args.edit_config:
+        print(write_edit_config(*args.edit_config))
+        return 0
     if args.measure:
         measure(args.measure)
         return 0

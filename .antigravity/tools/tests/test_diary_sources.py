@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from diary_sources import DiaryFormatError, parse_it_date, parse_malvenuto  # noqa: E402
+from diary_sources import DiaryFormatError, handle_gmail_response, parse_forum_messages, parse_it_date, parse_malvenuto  # noqa: E402
 
 FIXTURES = Path(__file__).with_name("fixtures")
 
@@ -59,6 +59,26 @@ class TestDates(unittest.TestCase):
         self.assertEqual(parse_it_date("Lezione dell'8 ottobre 2026", 2026), "2026-10-08")
         self.assertEqual(parse_it_date("Venerdì  8 gennaio", 2026), "2027-01-08")
         self.assertIsNone(parse_it_date("nessuna data", 2026))
+
+
+class TestGmailForum(unittest.TestCase):
+    def test_forum_messages(self):
+        msgs = [{"subject": "Analisi Matematica I: Diario delle lezioni: Lezione del 2 novembre 2026", "date": "2026-11-02T13:00:00Z", "body": "Serie a segni alterni. Criterio di Leibniz."},
+                {"subject": "Analisi Matematica I: Diario delle lezioni: Lezione del 1° ottobre 2026", "date": "2026-10-01T13:00:00Z", "body": "Numeri naturali."},
+                {"subject": "Avviso aule", "date": "2026-10-03T09:00:00Z", "body": "..."}]
+        got = parse_forum_messages(msgs, "analisi", 2026)
+        self.assertEqual([l.date for l in got], ["2026-10-01", "2026-11-02"])
+        self.assertEqual(got[1].text, "Serie a segni alterni. Criterio di Leibniz.")
+        self.assertEqual(got[1].source, "gmail_forum")
+
+    def test_latest_message_wins_for_same_lesson(self):
+        msgs = [{"subject": "Diario delle lezioni: Lezione dell'8 ottobre 2026", "date": "2026-10-08T13:00:00Z", "body": "Prima versione."},
+                {"subject": "Re: Diario delle lezioni: Lezione dell'8 ottobre 2026", "date": "2026-10-09T08:00:00Z", "body": "Versione corretta."}]
+        self.assertEqual([l.text for l in parse_forum_messages(msgs, "analisi", 2026)], ["Versione corretta."])
+
+    def test_script_error_is_reported(self):
+        with self.assertRaisesRegex(DiaryFormatError, "Script Google"):
+            handle_gmail_response({"error": "forbidden"}, "analisi", 2026)
 
 
 if __name__ == "__main__":

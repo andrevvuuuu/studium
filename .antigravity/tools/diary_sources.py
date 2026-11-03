@@ -88,3 +88,38 @@ def read_malvenuto(url: str, course: str, start_year: int) -> Tuple[List[Lesson]
     with urllib.request.urlopen(url, timeout=20) as resp:
         page = resp.read().decode("utf-8", errors="replace")
     return parse_malvenuto(page, course, start_year)
+
+
+# Analisi (prof. Orsina): forum Moodle "Diario delle lezioni", una discussione per lezione ("Lezione del 2 novembre
+# 2026"). L'utente è iscritto al forum, i post arrivano nella Gmail della Sapienza e uno Google Apps Script suo
+# (Scripts/tutor_gmail.gs) li espone come JSON a un indirizzo segreto. Moodle non dà token agli studenti.
+
+def parse_forum_messages(messages: List[Dict[str, str]], course: str, start_year: int) -> List[Lesson]:
+    """Una lezione per data ("Lezione del …" nell'oggetto); per la stessa lezione vale il messaggio più recente."""
+    by_date: Dict[str, Tuple[str, Lesson]] = {}
+    for msg in messages:
+        m = re.search(r"Lezione\s+(?:del|dell'|dello|della)\s*(.*)", msg.get("subject", ""), re.I)
+        date = parse_it_date(m.group(1), start_year) if m else None
+        body = (msg.get("body") or "").strip()
+        if not date or not body:
+            continue
+        sent = msg.get("date", "")
+        if date not in by_date or sent > by_date[date][0]:
+            by_date[date] = (sent, Lesson(course=course, date=date, text=body, source="gmail_forum"))
+    return [by_date[d][1] for d in sorted(by_date)]
+
+
+def handle_gmail_response(data, course: str, start_year: int) -> List[Lesson]:
+    if isinstance(data, dict) and data.get("error"):
+        raise DiaryFormatError(f"Script Google: {data['error']}")
+    if not isinstance(data, list):
+        raise DiaryFormatError("Script Google: risposta inattesa")
+    return parse_forum_messages(data, course, start_year)
+
+
+def read_gmail_forum(secrets: Dict[str, str], course: str, start_year: int) -> List[Lesson]:
+    import json
+    import urllib.parse
+    url = secrets["gmail_url"] + ("&" if "?" in secrets["gmail_url"] else "?") + urllib.parse.urlencode({"key": secrets.get("gmail_key", "")})
+    with urllib.request.urlopen(url, timeout=20) as resp:
+        return handle_gmail_response(json.loads(resp.read().decode("utf-8")), course, start_year)

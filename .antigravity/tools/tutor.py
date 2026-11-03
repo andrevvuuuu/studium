@@ -186,5 +186,154 @@ def measure(course_id: str) -> None:
     print(json.dumps(data.get("structured_output") or data.get("response"), ensure_ascii=False)[:1500])
 
 
-if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "--measure":
-    measure(sys.argv[2])
+# ------------------------------------------------------------------------------
+# Esecuzione giornaliera
+# ------------------------------------------------------------------------------
+
+TUTOR_DIR = VAULT / ".antigravity" / "tutor"
+STORE = TUTOR_DIR / "lessons.jsonl"
+STATE = TUTOR_DIR / "state.json"
+LOCK = TUTOR_DIR / "tutor.lock"
+WEEKDAYS = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
+RECUPERO_DAYS = 7
+
+
+def should_run(state: Dict[str, Any], today: str, force: bool) -> bool:
+    return force or state.get("last_run_day") != today
+
+
+def acquire_lock(path: Path) -> bool:
+    """Un'esecuzione alla volta (Obsidian aperto due volte); il lock di un processo morto non blocca."""
+    try:
+        pid = int(path.read_text().strip())
+        os.kill(pid, 0)
+        return False
+    except (OSError, ValueError):
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(os.getpid()))
+    return True
+
+
+def release_lock(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def next_lesson(orario: List[Dict[str, str]], today: str) -> Optional[Dict[str, str]]:
+    from datetime import date, timedelta
+    if not orario:
+        return None
+    d = date.fromisoformat(today)
+    for offset in range(1, 8):
+        day = d + timedelta(days=offset)
+        slots = sorted(s["ora"] for s in orario if s.get("giorno") == WEEKDAYS[day.weekday()])
+        if slots:
+            return {"data": day.isoformat(), "ora": slots[0]}
+    return None
+
+
+def build_state(courses: List[Course], analyses: Dict[str, List[Dict[str, Any]]], forecasts: Dict[str, List[Lesson]],
+                exams: Dict[str, List[Dict[str, str]]], errors: Dict[str, str], today: str, previous: Dict[str, Any]) -> Dict[str, Any]:
+    from datetime import date, timedelta
+    prev = {c.get("id"): c for c in previous.get("courses") or []}
+    cutoff = (date.fromisoformat(today) - timedelta(days=RECUPERO_DAYS)).isoformat()
+    out, recupero = [], False
+    for c in courses:
+        lessons = {l["date"]: l for l in (prev.get(c.id) or {}).get("lessons") or []}
+        for l in analyses.get(c.id) or []:
+            lessons[l["date"]] = l
+        ordered = [lessons[d] for d in sorted(lessons)]
+        if any(it.get("status") == "da_creare" for l in ordered if l["date"] < cutoff for it in l["items"]):
+            recupero = True
+        seen, all_exams = set(), []
+        for e in c.esami + (exams.get(c.id) or []):
+            key = (e["nome"], e["data"])
+            if key not in seen and e["data"] >= today:
+                seen.add(key)
+                all_exams.append(e)
+        entry = {
+            "id": c.id, "nome": c.nome, "lessons": ordered,
+            "previsione": [l.text for l in (forecasts.get(c.id) or [])[:5]],
+            "esami": sorted(all_exams, key=lambda e: e["data"]),
+            "prossima_lezione": next_lesson(c.orario, today),
+        }
+        if c.id in errors:
+            entry["errore"] = errors[c.id]
+        out.append(entry)
+    return {"updated_at": today, "last_run_day": today, "courses": out, "recupero": recupero}
+
+
+def write_state(path: Path, state: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def read_course(course: Course):
+    """(lezioni fatte, previsione, esami) dalla fonte del corso; solleva DiaryFormatError o OSError."""
+    from diary_sources import DiaryFormatError, read_malvenuto
+    tipo = course.fonte.get("tipo")
+    if tipo == "malvenuto_site":
+        return read_malvenuto(course.fonte["url"], course.id, course.start_year)
+    if tipo == "gmail_forum":
+        from tutor_store import load_secrets
+        secrets = load_secrets(TUTOR_DIR / "secrets.json")
+        if not secrets.get("gmail_url"):
+            raise DiaryFormatError("script Google non ancora configurato")
+        from diary_sources import read_gmail_forum
+        return read_gmail_forum(secrets, course.id, course.start_year), [], []
+    raise DiaryFormatError(f"fonte sconosciuta: {tipo}")
+
+
+def run(force: bool = False) -> int:
+    from datetime import date
+    from tutor_store import append_new, lesson_key, load_courses, mark_analyzed, pending
+    today = date.today().isoformat()
+    try:
+        previous = json.loads(STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = {}
+    if not should_run(previous, today, force) or not acquire_lock(LOCK):
+        return 0
+    try:
+        courses = load_courses(TUTOR_DIR / "courses.json")
+        analyses, forecasts, exams, errors = {}, {}, {}, {}
+        for c in courses:
+            try:
+                done, forecasts[c.id], exams[c.id] = read_course(c)
+                append_new(STORE, done)
+            except Exception as e:  # una fonte giù non ferma le altre
+                errors[c.id] = str(e)
+            todo = pending(STORE, c.id)
+            if not todo:
+                continue
+            result = analyze(c, todo, VAULT)
+            if result is None:
+                errors[c.id] = "agy non ha risposto: riprovo domani"
+                continue
+            analyses[c.id] = result
+            mark_analyzed(STORE, [lesson_key(l) for l in todo])
+        write_state(STATE, build_state(courses, analyses, forecasts, exams, errors, today, previous))
+        return 0
+    finally:
+        release_lock(LOCK)
+
+
+def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser(description="Tutor delle lezioni: diari, analisi con agy, stato per la barra.")
+    ap.add_argument("--force", action="store_true", help="Esegui anche se oggi è già stato fatto")
+    ap.add_argument("--measure", metavar="COURSE", help="Costo reale di una chiamata sull'ultima lezione del corso")
+    args = ap.parse_args()
+    if args.measure:
+        measure(args.measure)
+        return 0
+    return run(force=args.force)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -129,8 +129,15 @@ function render(app, vaultBasePath) {
     pill.type = "button";
     root.appendChild(pill);
     const card = el("div", "ag-tutor-card");
-    card.hidden = true;
-    pill.addEventListener("click", () => { card.hidden = !card.hidden; root.classList.toggle("is-open", !card.hidden); });
+    // Aperta o ridotta a pillola: la scelta resta anche quando la barra si ridisegna
+    const setOpen = (open) => {
+        card.hidden = !open;
+        root.classList.toggle("is-open", open);
+        try { localStorage.setItem("ag-tutor-open", open ? "1" : "0"); } catch (_) {}
+    };
+    let startOpen = false;
+    try { startOpen = localStorage.getItem("ag-tutor-open") === "1"; } catch (_) {}
+    pill.addEventListener("click", () => setOpen(true));
 
     const head = el("div", "ag-hud-head");
     head.appendChild(el("div", "ag-hud-title ag-hud-heading", v.mode === "recupero" ? "Recupero delle lezioni" : "Tutor delle lezioni"));
@@ -139,6 +146,13 @@ function render(app, vaultBasePath) {
     close.setAttribute("aria-label", "Nascondi fino a domani");
     close.textContent = "×";
     close.addEventListener("click", () => { try { localStorage.setItem("ag-tutor-hidden", today); } catch (_) {} root.remove(); });
+    const minimize = el("button", "ag-hud-x ag-tutor-min");
+    minimize.type = "button";
+    minimize.setAttribute("aria-label", "Riduci a pillola");
+    minimize.title = "Riduci";
+    minimize.textContent = "–";
+    minimize.addEventListener("click", () => setOpen(false));
+    head.appendChild(minimize);
     head.appendChild(close);
     card.appendChild(head);
 
@@ -183,6 +197,7 @@ function render(app, vaultBasePath) {
     }
     if (v.foot) card.appendChild(el("div", "ag-tutor-foot", v.foot));
     root.appendChild(card);
+    setOpen(startOpen);
     document.body.appendChild(root);
 }
 

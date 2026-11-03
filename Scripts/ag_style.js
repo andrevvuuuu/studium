@@ -132,8 +132,9 @@ module.exports = function injectAgStyle() {
             --ag-active: var(--interactive-accent);
             --ag-danger: var(--color-red, #ff3b30);
             position: fixed;
-            left: calc(var(--ribbon-width, 44px) + 12px);
-            bottom: 16px;
+            /* In alto a destra, un po' sotto la barra delle schede */
+            top: calc(var(--header-height, 40px) + 24px);
+            right: 16px;
             z-index: var(--layer-notice, 9999);
             max-width: calc(100vw - 32px);
             font-family: var(--font-interface);
@@ -162,6 +163,8 @@ module.exports = function injectAgStyle() {
         }
         .ag-tutor-lavoro .ag-tutor-pill, .ag-tutor-recupero .ag-tutor-pill { color: var(--ag-active); font-weight: 600; }
         .ag-tutor.is-open .ag-tutor-pill { display: none; }
+        .ag-tutor-pill { margin-left: auto; }
+        .ag-tutor-card .ag-tutor-min { font-size: 16px; line-height: 1; }
         .ag-tutor-card {
             width: 372px;
             max-width: 100%;

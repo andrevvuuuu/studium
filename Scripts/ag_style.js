@@ -123,6 +123,66 @@ module.exports = function injectAgStyle() {
             .ag-hud, .ag-hud * { animation: none !important; transition: none !important; }
             .ag-hud-seg.is-idle > i { background: color-mix(in srgb, var(--ag-active) 40%, transparent); }
         }
+    
+        /* Barra del tutor delle lezioni (Scripts/tutor_bar.js): stesso angolo e stesso vetro dell'HUD */
+        .ag-tutor {
+            --ag-surface: color-mix(in srgb, var(--background-primary) 80%, transparent);
+            --ag-track: color-mix(in srgb, var(--text-normal) 9%, transparent);
+            --ag-done: var(--color-green, #34c759);
+            --ag-active: var(--interactive-accent);
+            --ag-danger: var(--color-red, #ff3b30);
+            position: fixed;
+            left: calc(var(--ribbon-width, 44px) + 12px);
+            bottom: 16px;
+            z-index: var(--layer-notice, 9999);
+            max-width: calc(100vw - 32px);
+            font-family: var(--font-interface);
+            font-size: 13px;
+            line-height: 1.4;
+            color: var(--text-normal);
+            animation: ag-hud-in 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        body:has(.ag-hud) .ag-tutor { display: none; }
+        .ag-tutor-pill, .ag-tutor-card {
+            box-sizing: border-box;
+            border: 1px solid var(--background-modifier-border);
+            background: var(--ag-surface);
+            -webkit-backdrop-filter: blur(28px) saturate(1.7);
+            backdrop-filter: blur(28px) saturate(1.7);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 12px 32px -8px rgba(0, 0, 0, 0.38);
+        }
+        .ag-tutor-pill {
+            display: block;
+            min-height: 32px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            color: var(--text-normal);
+            font: inherit;
+            cursor: pointer;
+        }
+        .ag-tutor-lavoro .ag-tutor-pill, .ag-tutor-recupero .ag-tutor-pill { color: var(--ag-active); font-weight: 600; }
+        .ag-tutor.is-open .ag-tutor-pill { display: none; }
+        .ag-tutor-card {
+            width: 372px;
+            max-width: 100%;
+            max-height: min(70vh, 640px);
+            overflow-y: auto;
+            padding: 14px 16px 12px;
+            border-radius: 14px;
+        }
+        .ag-tutor-card .ag-hud-x { font-size: 16px; line-height: 1; }
+        .ag-tutor-problem { margin-top: 8px; color: var(--text-muted); font-size: 12px; }
+        .ag-tutor-lesson { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--background-modifier-border); }
+        .ag-tutor-lesson-title { font-weight: 600; }
+        .ag-tutor-item { margin-top: 8px; }
+        .ag-tutor-status { display: inline-block; margin-right: 6px; font-size: 11px; font-weight: 600; color: var(--ag-active); }
+        .ag-tutor-da_completare .ag-tutor-status { color: var(--text-accent); }
+        .ag-tutor-coperto .ag-tutor-status { color: var(--ag-done); }
+        .ag-tutor-reason { margin-top: 2px; color: var(--text-muted); font-size: 12px; -webkit-user-select: text; user-select: text; }
+        .ag-tutor-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .ag-tutor-actions button { min-height: 28px; }
+        .ag-tutor-more { background: transparent; box-shadow: none; color: var(--text-muted); }
+        .ag-tutor-foot { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--background-modifier-border); color: var(--text-muted); font-size: 12px; }
     `;
     document.head.appendChild(styleEl);
 };

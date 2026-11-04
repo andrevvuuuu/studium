@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from diary_sources import Lesson  # noqa: E402
-from tutor import analyze, build_prompt, moc_notes, validate  # noqa: E402
+from tutor import agree, analyze, build_prompt, check_proof_claims, moc_notes, validate  # noqa: E402
 from tutor_store import Course  # noqa: E402
 
 NOTES = [{"title": "Massimo Comune Divisore", "aliases": ["MCD"], "headings": ["Esistenza e unicità"], "exists": True},
@@ -147,7 +147,7 @@ class TestAnalyze(unittest.TestCase):
             dates = [l.date for l in lessons if f"[{l.date}]" in prompt]
             calls.append(dates)
             return None if len(calls) == 2 else {"lessons": [{"date": d, "items": []} for d in dates]}
-        got = analyze(COURSE, lessons, make_vault(), ask=ask)
+        got = analyze(COURSE, lessons, make_vault(), ask=ask, passes=1)
         self.assertEqual([len(c) for c in calls], [4, 4, 2])
         self.assertEqual([l["date"] for l in got], calls[0] + calls[2])
 
@@ -161,9 +161,54 @@ class TestAnalyze(unittest.TestCase):
             return {"lessons": [{"date": d, "items": [{"concept": "Algebra dei limiti", "kind": "teorema", "status": "da_creare",
                                                         "title": "algebra dei limiti di successioni" if len(prompts) == 2 else "Algebra dei Limiti di Successioni",
                                                         "reason": "manca"}]} for d in dates]}
-        got = analyze(COURSE, lessons, make_vault(), ask=ask)
+        got = analyze(COURSE, lessons, make_vault(), ask=ask, passes=1)
         self.assertIn("Algebra dei Limiti di Successioni", prompts[1].split("PREVISTE")[1])
         self.assertEqual({it["title"] for l in got for it in l["items"]}, {"Algebra dei Limiti di Successioni"})
+
+    def test_two_passes_keep_only_the_gaps_both_found(self):
+        answers = [
+            {"lessons": [{"date": "2026-10-26", "items": [
+                {"concept": "Bézout", "kind": "teorema", "status": "da_creare", "title": "Identità di Bézout", "reason": "a"},
+                {"concept": "Stirling", "kind": "teorema", "status": "da_completare", "note": "Massimo Comune Divisore", "missing": "x", "reason": "a"},
+                {"concept": "MCD", "kind": "definizione", "status": "coperto", "note": "Massimo Comune Divisore", "reason": "a"}]}]},
+            {"lessons": [{"date": "2026-10-26", "items": [
+                {"concept": "Bézout", "kind": "teorema", "status": "da_creare", "title": "Teorema di Identità di Bézout", "reason": "b"},
+                {"concept": "Stirling", "kind": "teorema", "status": "coperto", "note": "Massimo Comune Divisore", "reason": "b"}]}]}]
+        got = analyze(COURSE, [LESSON], make_vault(), ask=lambda *a, **k: answers.pop(0))
+        self.assertEqual([(i["status"], i.get("title") or i.get("note")) for i in got[0]["items"]],
+                         [("da_creare", "Identità di Bézout"), ("coperto", "Massimo Comune Divisore")])
+
+    def test_one_failed_pass_falls_back_to_the_other(self):
+        answer = {"lessons": [{"date": "2026-10-26", "items": [
+            {"concept": "Bézout", "kind": "teorema", "status": "da_creare", "title": "Identità di Bézout", "reason": "a"}]}]}
+        answers = [None, answer]
+        got = analyze(COURSE, [LESSON], make_vault(), ask=lambda *a, **k: answers.pop(0))
+        self.assertEqual(got[0]["items"][0]["status"], "da_creare")
+
+    def test_agree_matches_the_same_concept_placed_in_different_notes(self):
+        first = [{"date": "d", "items": [{"status": "da_creare", "title": "Teorema della Disuguaglianza di Bernoulli",
+                                          "concept": "Dimostrazione della disuguaglianza di Bernoulli per induzione"},
+                                         {"status": "da_creare", "title": "Algebra dei Limiti di Successioni", "concept": "Limiti divergenti"}]}]
+        second = [{"date": "d", "items": [{"status": "da_completare", "note": "Principio di Induzione Matematica",
+                                           "concept": "Disuguaglianza di Bernoulli e dimostrazione per induzione"},
+                                          {"status": "da_creare", "title": "Cardinalità degli Insiemi", "concept": "Numerabilità"}]}]
+        self.assertEqual([i["title"] for i in agree(first, second)[0]["items"]], ["Teorema della Disuguaglianza di Bernoulli"])
+
+    def test_missing_proof_needs_the_diary_to_say_it_was_proven(self):
+        diary = "Ripasso: criteri.\nFormula di Stirling.\nSerie a segni alterni e criterio di Leibniz con relativa dimostrazione."
+        got = check_proof_claims([{"date": "d", "items": [
+            {"status": "da_completare", "note": "Gerarchia degli Infiniti e Formula di Stirling", "concept": "Formula di Stirling",
+             "missing": "Dimostrazione della formula di Stirling", "reason": "r"},
+            {"status": "da_completare", "note": "Criterio di Leibniz per le Serie a Segno Alterno", "concept": "Criterio di Leibniz",
+             "missing": "Dimostrazione del criterio di Leibniz", "reason": "r"},
+            {"status": "da_completare", "note": "Convergenza Assoluta delle Serie", "concept": "Proprietà",
+             "missing": "invarianza per riordinamento", "reason": "r"}]}], {"d": diary})
+        self.assertEqual([i["status"] for i in got[0]["items"]], ["coperto", "da_completare", "da_completare"])
+        self.assertNotIn("missing", got[0]["items"][0])
+
+    def test_agree_keeps_lessons_missing_from_the_second_pass_out(self):
+        first = [{"date": "2026-10-26", "items": [{"status": "da_creare", "title": "X Y", "reason": "r"}]}]
+        self.assertEqual(agree(first, []), [])
 
     def test_analyze_is_none_only_when_every_call_fails(self):
         lessons = [Lesson("algebra", f"2026-10-{d:02d}", "x", "x") for d in range(1, 6)]

@@ -26,6 +26,7 @@ from tutor_store import Course  # noqa: E402
 VAULT = Path(__file__).resolve().parents[2]
 TUTOR_MODEL = "gemini-3.8-flash-low"
 ANALYZE_CHUNK = 4
+ANALYZE_PASSES = 2
 STATUSES = ("coperto", "da_completare", "da_creare")
 KINDS = ("concetto", "teorema", "definizione")
 
@@ -233,20 +234,74 @@ def validate(raw: Any, notes: List[Dict[str, Any]], dates: Optional[set] = None,
     return out
 
 
-def analyze(course: Course, lessons: List[Lesson], vault: Path, ask: Callable[..., Optional[Dict[str, Any]]] = ask_agy) -> Optional[List[Dict[str, Any]]]:
+# Parole troppo comuni nel corso per dire che due voci parlano dello stesso concetto
+GAP_GENERIC = {"dimostrazione", "definizione", "proprieta", "serie", "successioni", "successione", "numeri", "insiemi",
+               "limiti", "limite", "relativa", "relativo", "suo", "sua", "loro", "tipo"}
+
+
+def gap_words(item: Dict[str, Any]) -> set:
+    text = " ".join([item.get("title") or item.get("note") or "", item.get("concept", "")])
+    return {w for w in re.split(r"[^0-9a-z]+", norm(text)) if len(w) > 2 and w not in TITLE_FILLERS and w not in GAP_GENERIC}
+
+
+def same_gap(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    """Stesso concetto, anche se le due analisi lo mettono in note diverse o con titoli diversi
+    («Teorema di Riemann sul Riordinamento delle Serie» e «Teorema del Riordinamento di Riemann»)."""
+    wa, wb = gap_words(a), gap_words(b)
+    return bool(wa and wb) and len(wa & wb) / min(len(wa), len(wb)) >= 0.5
+
+
+def agree(first: List[Dict[str, Any]], second: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Le lacune (da creare, da completare) della prima analisi che anche la seconda ha trovato sullo stesso concetto;
+    le voci coperte restano. Una lezione che la seconda analisi non ha restituito resta fuori: si rianalizza dopo."""
+    gaps = {l["date"]: [it for it in l["items"] if it["status"] != "coperto"] for l in second}
+    return [{"date": l["date"], "items": [it for it in l["items"] if it["status"] == "coperto" or any(same_gap(it, o) for o in gaps[l["date"]])]}
+            for l in first if l["date"] in gaps]
+
+
+def check_proof_claims(analysis: List[Dict[str, Any]], diaries: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Una dimostrazione mancante conta solo se la riga del diario su quel concetto dice che è stata fatta: agy tende
+    a chiedere la dimostrazione di ogni risultato che nella nota ne è senza (per esempio la formula di Stirling, che
+    a lezione è solo enunciata)."""
+    for l in analysis:
+        lines = [x for x in re.split(r"\n|(?<=\.)\s+", diaries.get(l["date"], "")) if x.strip()]
+        for it in l["items"]:
+            if it["status"] != "da_completare" or "dimostr" not in it.get("missing", "").lower():
+                continue
+            words = gap_words(it)
+            about = [x for x in lines if words & set(re.split(r"[^0-9a-z]+", norm(x)))]
+            if about and not any("dimostr" in norm(x) for x in about):
+                it["status"] = "coperto"
+                it.pop("missing", None)
+                it["reason"] = f"{it.get('reason', '')} (Il diario non dice che a lezione sia stata dimostrata.)".strip()
+    return analysis
+
+
+def analyze(course: Course, lessons: List[Lesson], vault: Path, ask: Callable[..., Optional[Dict[str, Any]]] = ask_agy,
+            passes: int = ANALYZE_PASSES) -> Optional[List[Dict[str, Any]]]:
     """Poche lezioni per chiamata: con risposte lunghe (15 lezioni insieme) agy si blocca fino al timeout. Il prompt
-    ripete l'elenco delle note, ma quella parte agy la legge dalla cache. Una chiamata fallita perde solo le sue lezioni."""
+    ripete l'elenco delle note, ma quella parte agy la legge dalla cache. Ogni gruppo si analizza due volte e valgono
+    solo le lacune trovate da entrambe: da sola, un'analisi aggiunge una o due segnalazioni sbagliate e ne perde
+    qualcuna vera a caso. Se una delle due fallisce vale l'altra; se falliscono tutte, il gruppo si riprova domani."""
     notes = moc_notes(vault, course.moc)
     vault_titles = {p.stem: p.stem for p in note_files(vault).values()}
     out: List[Dict[str, Any]] = []
     answered = False
     for i in range(0, len(lessons), ANALYZE_CHUNK):
         chunk = lessons[i:i + ANALYZE_CHUNK]
-        raw = ask(build_prompt(course, chunk, notes), ANALYZE_SCHEMA, model=TUTOR_MODEL, timeout_sec=90)
-        if raw is None:
+        prompt = build_prompt(course, chunk, notes)
+        runs = []
+        for _ in range(passes):
+            raw = ask(prompt, ANALYZE_SCHEMA, model=TUTOR_MODEL, timeout_sec=90)
+            if raw is not None:
+                runs.append(validate(raw, notes, dates={l.date for l in chunk}, vault_titles=vault_titles))
+        if not runs:
             continue
         answered = True
-        got = validate(raw, notes, dates={l.date for l in chunk}, vault_titles=vault_titles)
+        got = runs[0]
+        for other in runs[1:]:
+            got = agree(got, other)
+        got = check_proof_claims(got, {l.date: l.text for l in chunk})
         out += got
         # I titoli nuovi diventano "previsti" per i gruppi dopo: un concetto ripreso in più lezioni ha un solo nome
         known = {n["title"].lower() for n in notes}

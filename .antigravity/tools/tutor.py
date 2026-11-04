@@ -69,6 +69,11 @@ Per ogni voce indica:
 - "reason": una frase breve in italiano che spiega la scelta allo studente.
 Raggruppa nella stessa voce i concetti che starebbero nella stessa nota. Non inventare titoli di note esistenti.
 
+DOVE VA IL CONTENUTO (prima di ogni "da_completare"):
+- se una sezione della nota, o di un'altra nota dell'elenco, tratta già quel contenuto (anche con un altro nome), la voce è "coperto";
+- "da_completare" solo se il contenuto mancante appartiene all'argomento centrale della nota: la sua definizione, il suo enunciato, la sua dimostrazione, una sua proprietà diretta;
+- se invece è un risultato, un algoritmo o un procedimento con un nome proprio che ha già una nota sua nell'elenco, o tra quelle previste, la voce va su quella nota (coperto o da_completare se esiste, da_creare con quel titolo se è prevista). Una nota generale che lo cita in poche righe non è la sua nota.
+
 === LEZIONI ===
 {lessons}
 === NOTE DEL CORSO (titolo · alias · sezioni) ===

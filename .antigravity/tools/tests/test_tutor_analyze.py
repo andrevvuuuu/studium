@@ -77,6 +77,11 @@ class TestValidate(unittest.TestCase):
         notes = NOTES + [{"title": "Numeri Primi", "aliases": [], "headings": [], "exists": False}]
         self.assertIn("Numeri Primi", build_prompt(COURSE, [LESSON], notes).split("PREVISTE")[1])
 
+    def test_prompt_asks_where_missing_content_belongs(self):
+        prompt = build_prompt(COURSE, [LESSON], NOTES)
+        self.assertIn("DOVE VA IL CONTENUTO", prompt)
+        self.assertIn("nota sua", prompt)
+
     def test_item_without_reason_is_dropped(self):
         raw = {"lessons": [{"date": "2026-10-26", "items": [{"concept": "X", "kind": "concetto", "status": "da_creare", "title": "X", "reason": ""}]}]}
         self.assertEqual(validate(raw, NOTES)[0]["items"], [])

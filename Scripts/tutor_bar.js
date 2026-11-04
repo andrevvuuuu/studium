@@ -121,29 +121,28 @@ async function act(app, vaultBasePath, kind, lesson, button) {
 }
 
 /**
- * Posizione: nella barra laterale sinistra, in alto a destra subito sotto le sue schede (la pillola finisce al
- * bordo destro della barra laterale, la scheda aperta parte dallo stesso punto e si allarga sopra la nota).
- * Con la barra laterale chiusa resta in alto a destra della finestra (CSS).
+ * Posizione: nella barra laterale destra, nel riquadro in basso (Collegamenti) subito sotto la sua intestazione,
+ * allineata al bordo destro. La scheda aperta si allarga verso sinistra sopra la nota e, se sotto non c'è spazio,
+ * sale fino a stare nella finestra. Con la barra laterale chiusa resta in alto a destra della finestra (CSS).
  */
 function place(root) {
-    const side = document.querySelector(".workspace-split.mod-left-split");
+    const side = document.querySelector(".workspace-split.mod-right-split");
     const rect = side && side.getBoundingClientRect();
     if (!rect || rect.width < 120) {
-        root.style.removeProperty("top");
-        root.style.removeProperty("left");
-        root.style.removeProperty("right");
+        for (const k of ["top", "left", "right", "max-width"]) root.style.removeProperty(k);
         return;
     }
-    const header = side.querySelector(".workspace-tab-header-container");
-    const top = (header ? header.getBoundingClientRect().bottom : rect.top + 40) + 20;
-    // Con la scheda aperta la pillola è nascosta: si usa la larghezza misurata quando era visibile
-    const pill = root.querySelector(".ag-tutor-pill");
-    if (pill && pill.offsetWidth) window._agTutorPillWidth = pill.offsetWidth;
-    const pillWidth = window._agTutorPillWidth || 160;
-    const left = Math.max(8, rect.right - 12 - pillWidth);
+    const panes = [...side.querySelectorAll(":scope .workspace-tabs")].filter(p => p.offsetHeight > 0)
+        .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+    const lower = panes.length > 1 ? panes[panes.length - 1].getBoundingClientRect() : null;
+    let top = lower ? lower.top + 56 : rect.bottom - 120;
+    const height = root.offsetHeight || 34;
+    top = Math.max(rect.top + 12, Math.min(top, window.innerHeight - 12 - height));
     root.style.top = `${Math.round(top)}px`;
-    root.style.left = `${Math.round(left)}px`;
-    root.style.right = "auto";
+    root.style.right = `${Math.round(Math.max(8, window.innerWidth - rect.right + 12))}px`;
+    root.style.left = "auto";
+    // Chiusa, la pillola sta nella barra laterale; aperta, la scheda può uscirne verso sinistra
+    root.style.maxWidth = root.classList.contains("is-open") ? "" : `${Math.round(rect.width - 24)}px`;
 }
 
 function watchPlacement(root) {
@@ -153,10 +152,11 @@ function watchPlacement(root) {
     window.removeEventListener("resize", window._agTutorResize || (() => {}));
     window._agTutorResize = again;
     window.addEventListener("resize", again);
-    const side = document.querySelector(".workspace-split.mod-left-split");
+    const side = document.querySelector(".workspace-split.mod-right-split");
     if (side && typeof ResizeObserver !== "undefined") {
         window._agTutorPlacement = new ResizeObserver(again);
         window._agTutorPlacement.observe(side);
+        side.querySelectorAll(".workspace-tabs").forEach(p => window._agTutorPlacement.observe(p));
     }
 }
 

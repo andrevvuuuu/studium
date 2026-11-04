@@ -41,6 +41,14 @@ class TestMocNotes(unittest.TestCase):
             "## Note e Paragrafi Collegati\n### Teoremi e Concetti Derivati (Note Successive)\n", encoding="utf-8")
         self.assertEqual(moc_notes(vault, "01 MOC's/Algebra MOC.md")[0]["headings"], ["1. Enunciato", "Dimostrazione"])
 
+    def test_sections_without_proof_are_marked(self):
+        vault = make_vault()
+        (vault / "Matematica" / "Massimo Comune Divisore.md").write_text(
+            "# MCD\n## Esistenza\nEnunciato.\n\n*(Dimostrazione non presente nelle fonti del professore)*\n"
+            "### Esempio\nTesto.\n## Unicità\n> [!tip]- Dimostrazione\n> Passi.\n", encoding="utf-8")
+        self.assertEqual(moc_notes(vault, "01 MOC's/Algebra MOC.md")[0]["headings"],
+                         ["Esistenza [senza dimostrazione]", "Esempio", "Unicità [con dimostrazione]"])
+
 
 class TestValidate(unittest.TestCase):
     def test_invented_existing_note_becomes_missing(self):
@@ -81,6 +89,8 @@ class TestValidate(unittest.TestCase):
         prompt = build_prompt(COURSE, [LESSON], NOTES)
         self.assertIn("DOVE VA IL CONTENUTO", prompt)
         self.assertIn("nota sua", prompt)
+        self.assertIn("[senza dimostrazione]", prompt)
+        self.assertIn("[con dimostrazione]", prompt)
 
     def test_items_for_the_same_new_note_are_merged(self):
         raw = {"lessons": [{"date": "2026-10-26", "items": [
@@ -89,6 +99,25 @@ class TestValidate(unittest.TestCase):
         items = validate(raw, NOTES)[0]["items"]
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["concept"], "Divisioni successive; Coefficienti di Bézout")
+
+    def test_new_title_that_is_a_variant_of_an_existing_note_is_covered(self):
+        notes = NOTES + [{"title": "Teorema del Binomio di Newton", "aliases": [], "headings": [], "exists": True}]
+        raw = {"lessons": [{"date": "2026-10-16", "items": [
+            {"concept": "Binomio", "kind": "teorema", "status": "da_creare", "title": "Binomio di Newton", "reason": "r"}]}]}
+        item = validate(raw, notes)[0]["items"][0]
+        self.assertEqual((item["status"], item["note"]), ("coperto", "Teorema del Binomio di Newton"))
+
+    def test_variant_of_a_planned_title_uses_the_planned_spelling(self):
+        notes = NOTES + [{"title": "Cardinalità degli Insiemi e Numerabilità", "aliases": [], "headings": [], "exists": False}]
+        raw = {"lessons": [{"date": "2026-10-16", "items": [
+            {"concept": "Cardinalità", "kind": "concetto", "status": "da_creare", "title": "Cardinalità e Numerabilità degli Insiemi", "reason": "r"}]}]}
+        self.assertEqual(validate(raw, notes)[0]["items"][0]["title"], "Cardinalità degli Insiemi e Numerabilità")
+
+    def test_different_topics_with_shared_words_stay_apart(self):
+        raw = {"lessons": [{"date": "2026-10-16", "items": [
+            {"concept": "Algebra", "kind": "teorema", "status": "da_creare", "title": "Algebra dei Limiti di Successioni", "reason": "r"}]}]}
+        notes = NOTES + [{"title": "Limite di una Successione", "aliases": [], "headings": [], "exists": True}]
+        self.assertEqual(validate(raw, notes)[0]["items"][0]["status"], "da_creare")
 
     def test_item_without_reason_is_dropped(self):
         raw = {"lessons": [{"date": "2026-10-26", "items": [{"concept": "X", "kind": "concetto", "status": "da_creare", "title": "X", "reason": ""}]}]}

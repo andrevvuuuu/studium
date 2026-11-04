@@ -71,6 +71,7 @@ Raggruppa nella stessa voce i concetti che starebbero nella stessa nota. Non inv
 
 DOVE VA IL CONTENUTO (prima di ogni "da_completare"):
 - se una sezione della nota, o di un'altra nota dell'elenco, tratta già quel contenuto (anche con un altro nome), la voce è "coperto";
+- accanto ai titoli delle sezioni, "[con dimostrazione]" vuol dire che la sezione contiene una dimostrazione e "[senza dimostrazione]" che ha l'enunciato ma la dimostrazione manca. Se il diario dice che a lezione un risultato è stato dimostrato, è "coperto" solo se una sezione su quel risultato è segnata "[con dimostrazione]"; altrimenti è "da_completare" con "missing" = quella dimostrazione;
 - "da_completare" solo se il contenuto mancante appartiene all'argomento centrale della nota: la sua definizione, il suo enunciato, la sua dimostrazione, una sua proprietà diretta;
 - se invece è un risultato, un algoritmo o un procedimento con un nome proprio che ha già una nota sua nell'elenco, o tra quelle previste, la voce va su quella nota (coperto o da_completare se esiste, da_creare con quel titolo se è prevista). Una nota generale che lo cita in poche righe non è la sua nota.
 
@@ -111,6 +112,35 @@ BOILERPLATE_HEADING = re.compile(r"note e paragrafi collegati|teoremi e concetti
                                  r"esercizi|quiz|flashcard", re.I)
 
 
+NO_PROOF = re.compile(r"dimostrazione non presente", re.I)
+PROOF = re.compile(r"^>\s*\[![a-z]+\][-+]?\s*Dimostrazion", re.I)
+
+
+def note_headings(text: str) -> List[str]:
+    """Titoli ## e ### della nota. Il tutor vede solo questi, quindi accanto al titolo si segna se la sezione contiene
+    una dimostrazione (il riquadro "> [!tip]- Dimostrazione" delle note) o il segno "Dimostrazione non presente"
+    (lo scrive la pipeline quando le fonti non la danno): dal solo titolo non si capisce."""
+    headings: List[str] = []
+    flags: List[List[str]] = []
+    last: Optional[int] = None
+    for line in text.splitlines():
+        m = re.match(r"^(#+)\s+(.*)", line)
+        if m and len(m.group(1)) in (2, 3):
+            if BOILERPLATE_HEADING.search(line):
+                last = None
+            else:
+                headings.append(m.group(2).strip())
+                flags.append([])
+                last = len(headings) - 1
+            continue
+        if m or last is None:
+            continue
+        flag = "con dimostrazione" if PROOF.search(line) else "senza dimostrazione" if NO_PROOF.search(line) else None
+        if flag and flag not in flags[last]:
+            flags[last].append(flag)
+    return [h + "".join(f" [{f}]" for f in fl) for h, fl in zip(headings, flags)]
+
+
 def moc_notes(vault: Path, moc_rel: str) -> List[Dict[str, Any]]:
     """Note collegate dal MOC, nell'ordine del MOC, con alias e titoli delle sezioni."""
     files = note_files(vault)
@@ -121,9 +151,7 @@ def moc_notes(vault: Path, moc_rel: str) -> List[Dict[str, Any]]:
             out.append({"title": title, "aliases": [], "headings": [], "exists": False})
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        headings = [re.sub(r"^#+\s*", "", l).strip() for l in text.splitlines()
-                    if re.match(r"^#{2,3}\s", l) and not BOILERPLATE_HEADING.search(l)]
-        out.append({"title": title, "aliases": read_frontmatter_aliases(text), "headings": headings, "exists": True})
+        out.append({"title": title, "aliases": read_frontmatter_aliases(text), "headings": note_headings(text), "exists": True})
     return out
 
 
@@ -133,6 +161,18 @@ def build_prompt(course: Course, lessons: List[Lesson], notes: List[Dict[str, An
     planned = "\n".join(n["title"] for n in notes if not n["exists"])
     return (PROMPT.replace("{course}", course.nome).replace("{lessons}", lesson_lines).replace("{notes}", note_lines or "(nessuna)")
             .replace("{planned}", planned or "(nessuna)"))
+
+
+TITLE_FILLERS = {"teorema", "teoremi", "formula", "principio", "il", "lo", "la", "i", "gli", "le", "l", "di", "d", "del", "dello",
+                 "della", "dei", "degli", "delle", "e", "ed", "a", "al", "sul", "sulla", "sui", "sulle", "per", "in", "nel", "nella",
+                 "con", "tra", "fra", "un", "una"}
+
+
+def title_core(title: str) -> frozenset:
+    """Le parole che contano di un titolo, in qualsiasi ordine: "Binomio di Newton" e "Teorema del Binomio di Newton"
+    sono la stessa nota. Con meno di due parole il confronto non è affidabile e non si fa."""
+    words = frozenset(w for w in re.split(r"[^0-9a-z]+", norm(title)) if w and w not in TITLE_FILLERS)
+    return words if len(words) >= 2 else frozenset()
 
 
 def validate(raw: Any, notes: List[Dict[str, Any]], dates: Optional[set] = None,
@@ -147,6 +187,8 @@ def validate(raw: Any, notes: List[Dict[str, Any]], dates: Optional[set] = None,
                 existing[norm(name)] = n["title"]
         else:
             planned.setdefault(norm(n["title"]), n["title"])
+    existing_core = {title_core(k): v for k, v in existing.items() if title_core(k)}
+    planned_core = {title_core(v): v for v in planned.values() if title_core(v)}
     if not isinstance(raw, dict):
         return []
     out = []
@@ -169,13 +211,15 @@ def validate(raw: Any, notes: List[Dict[str, Any]], dates: Optional[set] = None,
                 else:
                     item["note"] = real
             if item["status"] == "da_creare":
-                real = existing.get(norm(item.get("title", ""))) or existing.get(norm(item.get("concept", "")))
+                real = (existing.get(norm(item.get("title", ""))) or existing.get(norm(item.get("concept", "")))
+                        or existing_core.get(title_core(item.get("title", ""))))
                 if real:
                     item["status"] = "coperto"
                     item["note"] = real
                     item.pop("title", None)
                 else:
-                    item["title"] = planned.get(norm(item.get("title", "")), item.get("title") or item.get("concept", ""))
+                    item["title"] = (planned.get(norm(item.get("title", ""))) or planned_core.get(title_core(item.get("title", "")))
+                                     or item.get("title") or item.get("concept", ""))
             # Una voce per nota: agy a volte divide in più voci i pezzi della stessa nota da creare o completare
             target = (item["status"], norm(item.get("title") or item.get("note", ""))) if item["status"] != "coperto" else None
             twin = next((x for x in items if target and (x["status"], norm(x.get("title") or x.get("note", ""))) == target), None)

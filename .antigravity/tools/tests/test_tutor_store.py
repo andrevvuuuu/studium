@@ -32,6 +32,15 @@ class TestStore(unittest.TestCase):
         append_new(self.store, [Lesson("algebra", "2026-10-02", "A", "site"), Lesson("analisi", "2026-10-01", "B", "gmail")])
         self.assertEqual([x.text for x in pending(self.store, "analisi")], ["B"])
 
+    def test_reanalysis_takes_every_lesson_once_with_its_latest_text(self):
+        a = Lesson("algebra", "2026-10-02", "Insiemi", "site", 1)
+        b = Lesson("algebra", "2026-10-05", "Relazioni", "site", 2)
+        append_new(self.store, [a, b])
+        mark_analyzed(self.store, [lesson_key(a), lesson_key(b)])
+        append_new(self.store, [Lesson("algebra", "2026-10-02", "Insiemi. Funzioni", "site", 1)])
+        got = pending(self.store, "algebra", include_analyzed=True)
+        self.assertEqual([(x.date, x.text) for x in got], [("2026-10-02", "Insiemi. Funzioni"), ("2026-10-05", "Relazioni")])
+
     def test_missing_secrets_is_empty(self):
         self.assertEqual(load_secrets(self.tmp / "nope.json"), {})
 

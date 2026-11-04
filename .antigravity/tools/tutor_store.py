@@ -77,8 +77,13 @@ def append_new(store: Path, lessons: List[Lesson]) -> List[Lesson]:
     return added
 
 
-def pending(store: Path, course: str) -> List[Lesson]:
+def pending(store: Path, course: str, include_analyzed: bool = False) -> List[Lesson]:
+    """Le lezioni ancora da analizzare; con include_analyzed tutte (per rifare l'analisi con un metodo nuovo), una per
+    data con il testo più recente."""
     events = read_events(store)
+    if include_analyzed:
+        latest = {e["lesson"]["date"]: Lesson(**e["lesson"]) for e in events if "key" in e and e["lesson"]["course"] == course}
+        return [latest[d] for d in sorted(latest)]
     analyzed = {e["analyzed"] for e in events if "analyzed" in e}
     out = []
     for e in events:

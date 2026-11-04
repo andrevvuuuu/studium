@@ -469,7 +469,7 @@ def read_course(course: Course):
     raise DiaryFormatError(f"fonte sconosciuta: {tipo}")
 
 
-def run(force: bool = False, only_reconcile: bool = False) -> int:
+def run(force: bool = False, only_reconcile: bool = False, reanalyze: bool = False) -> int:
     """Una volta al giorno legge i diari e analizza le lezioni nuove; ogni volta allinea lo stato ai file (senza AI)."""
     from datetime import date
     from tutor_store import append_new, lesson_key, load_courses, mark_analyzed, pending
@@ -481,7 +481,7 @@ def run(force: bool = False, only_reconcile: bool = False) -> int:
     if not acquire_lock(LOCK):
         return 0
     try:
-        if only_reconcile or not should_run(previous, today, force):
+        if only_reconcile or not should_run(previous, today, force or reanalyze):
             if previous.get("courses"):
                 write_state(STATE, reconcile(previous, VAULT, today))
             return 0
@@ -494,7 +494,7 @@ def run(force: bool = False, only_reconcile: bool = False) -> int:
                     append_new(STORE, done)
                 except Exception as e:
                     errors[c.id] = str(e)
-                todo = pending(STORE, c.id)
+                todo = pending(STORE, c.id, include_analyzed=reanalyze)
                 if not todo:
                     continue
                 result = analyze(c, todo, VAULT)
@@ -677,6 +677,7 @@ def main() -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Tutor delle lezioni: diari, analisi con agy, stato per la barra.")
     ap.add_argument("--force", action="store_true", help="Esegui anche se oggi è già stato fatto")
+    ap.add_argument("--reanalyze", action="store_true", help="Rianalizza tutte le lezioni, anche quelle già analizzate")
     ap.add_argument("--reconcile", action="store_true", help="Solo allinea lo stato ai file (nessuna AI)")
     ap.add_argument("--measure", metavar="COURSE", help="Costo reale di una chiamata sull'ultima lezione del corso")
     ap.add_argument("--batch-config", nargs=2, metavar=("COURSE", "DATE"), help="Prepara la creazione delle note di una lezione")
@@ -700,7 +701,7 @@ def main() -> int:
     if args.measure:
         measure(args.measure)
         return 0
-    return run(force=args.force, only_reconcile=args.reconcile)
+    return run(force=args.force, only_reconcile=args.reconcile, reanalyze=args.reanalyze)
 
 
 if __name__ == "__main__":

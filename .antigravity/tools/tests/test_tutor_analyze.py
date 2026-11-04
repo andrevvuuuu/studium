@@ -206,6 +206,13 @@ class TestAnalyze(unittest.TestCase):
         self.assertEqual([i["status"] for i in got[0]["items"]], ["coperto", "da_completare", "da_completare"])
         self.assertNotIn("missing", got[0]["items"][0])
 
+    def test_proof_check_skips_diaries_that_never_mention_proofs(self):
+        diary = "Teorema di esistenza e unicità di quoziente e resto sugli interi. Identità di Bézout."
+        got = check_proof_claims([{"date": "d", "items": [
+            {"status": "da_completare", "note": "Numeri Interi Relativi", "concept": "Quoziente e resto",
+             "missing": "Dimostrazione di esistenza e unicità di quoziente e resto", "reason": "r"}]}], {"d": diary})
+        self.assertEqual(got[0]["items"][0]["status"], "da_completare")
+
     def test_agree_keeps_lessons_missing_from_the_second_pass_out(self):
         first = [{"date": "2026-10-26", "items": [{"status": "da_creare", "title": "X Y", "reason": "r"}]}]
         self.assertEqual(agree(first, []), [])

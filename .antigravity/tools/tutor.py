@@ -262,9 +262,13 @@ def agree(first: List[Dict[str, Any]], second: List[Dict[str, Any]]) -> List[Dic
 def check_proof_claims(analysis: List[Dict[str, Any]], diaries: Dict[str, str]) -> List[Dict[str, Any]]:
     """Una dimostrazione mancante conta solo se la riga del diario su quel concetto dice che è stata fatta: agy tende
     a chiedere la dimostrazione di ogni risultato che nella nota ne è senza (per esempio la formula di Stirling, che
-    a lezione è solo enunciata)."""
+    a lezione è solo enunciata). Vale solo per i diari che segnano le dimostrazioni: quello di Algebra scrive
+    "Teorema di …" e la dimostrazione è sottintesa, quindi lì il silenzio non vuol dire niente."""
     for l in analysis:
-        lines = [x for x in re.split(r"\n|(?<=\.)\s+", diaries.get(l["date"], "")) if x.strip()]
+        diary = diaries.get(l["date"], "")
+        if "dimostr" not in norm(diary):
+            continue
+        lines = [x for x in re.split(r"\n|(?<=\.)\s+", diary) if x.strip()]
         for it in l["items"]:
             if it["status"] != "da_completare" or "dimostr" not in it.get("missing", "").lower():
                 continue

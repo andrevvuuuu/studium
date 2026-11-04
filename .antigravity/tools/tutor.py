@@ -25,6 +25,7 @@ from tutor_store import Course  # noqa: E402
 
 VAULT = Path(__file__).resolve().parents[2]
 TUTOR_MODEL = "gemini-3.8-flash-low"
+ANALYZE_CHUNK = 4
 STATUSES = ("coperto", "da_completare", "da_creare")
 KINDS = ("concetto", "teorema", "definizione")
 
@@ -100,6 +101,11 @@ def note_files(vault: Path) -> Dict[str, Path]:
     return by_name
 
 
+# Sezioni che ci sono in ogni nota o che non dicono quali concetti copre: nel prompt costano token e basta
+BOILERPLATE_HEADING = re.compile(r"note e paragrafi collegati|teoremi e concetti derivati|riferimenti puntuali|note generali e moc|"
+                                 r"esercizi|quiz|flashcard", re.I)
+
+
 def moc_notes(vault: Path, moc_rel: str) -> List[Dict[str, Any]]:
     """Note collegate dal MOC, nell'ordine del MOC, con alias e titoli delle sezioni."""
     files = note_files(vault)
@@ -110,7 +116,8 @@ def moc_notes(vault: Path, moc_rel: str) -> List[Dict[str, Any]]:
             out.append({"title": title, "aliases": [], "headings": [], "exists": False})
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        headings = [re.sub(r"^#+\s*", "", l).strip() for l in text.splitlines() if re.match(r"^#{2,4}\s", l)]
+        headings = [re.sub(r"^#+\s*", "", l).strip() for l in text.splitlines()
+                    if re.match(r"^#{2,3}\s", l) and not BOILERPLATE_HEADING.search(l)]
         out.append({"title": title, "aliases": read_frontmatter_aliases(text), "headings": headings, "exists": True})
     return out
 
@@ -170,12 +177,20 @@ def validate(raw: Any, notes: List[Dict[str, Any]], dates: Optional[set] = None,
 
 
 def analyze(course: Course, lessons: List[Lesson], vault: Path, ask: Callable[..., Optional[Dict[str, Any]]] = ask_agy) -> Optional[List[Dict[str, Any]]]:
+    """Poche lezioni per chiamata: con risposte lunghe (15 lezioni insieme) agy si blocca fino al timeout. Il prompt
+    ripete l'elenco delle note, ma quella parte agy la legge dalla cache. Una chiamata fallita perde solo le sue lezioni."""
     notes = moc_notes(vault, course.moc)
-    raw = ask(build_prompt(course, lessons, notes), ANALYZE_SCHEMA, model=TUTOR_MODEL)
-    if raw is None:
-        return None
     vault_titles = {p.stem: p.stem for p in note_files(vault).values()}
-    return validate(raw, notes, dates={l.date for l in lessons}, vault_titles=vault_titles)
+    out: List[Dict[str, Any]] = []
+    answered = False
+    for i in range(0, len(lessons), ANALYZE_CHUNK):
+        chunk = lessons[i:i + ANALYZE_CHUNK]
+        raw = ask(build_prompt(course, chunk, notes), ANALYZE_SCHEMA, model=TUTOR_MODEL, timeout_sec=180)
+        if raw is None:
+            continue
+        answered = True
+        out += validate(raw, notes, dates={l.date for l in chunk}, vault_titles=vault_titles)
+    return out if answered else None
 
 
 def measure(course_id: str) -> None:

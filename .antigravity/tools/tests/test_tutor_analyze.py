@@ -34,6 +34,13 @@ class TestMocNotes(unittest.TestCase):
         self.assertIn("Esistenza e unicità", notes[0]["headings"])
         self.assertFalse(notes[1]["exists"])
 
+    def test_headings_skip_boilerplate_exercises_and_deep_levels(self):
+        vault = make_vault()
+        (vault / "Matematica" / "Massimo Comune Divisore.md").write_text(
+            "# MCD\n## 1. Enunciato\n### Dimostrazione\n#### Passo 1\n## Esercizio: calcolo\n"
+            "## Note e Paragrafi Collegati\n### Teoremi e Concetti Derivati (Note Successive)\n", encoding="utf-8")
+        self.assertEqual(moc_notes(vault, "01 MOC's/Algebra MOC.md")[0]["headings"], ["1. Enunciato", "Dimostrazione"])
+
 
 class TestValidate(unittest.TestCase):
     def test_invented_existing_note_becomes_missing(self):
@@ -89,6 +96,22 @@ class TestAnalyze(unittest.TestCase):
             {"concept": "Identità di Bézout", "kind": "teorema", "status": "da_creare", "title": "Identità di Bézout", "after": "Massimo Comune Divisore", "reason": "non c'è nessuna nota"}]}]}
         got = analyze(COURSE, [LESSON], make_vault(), ask=lambda *a, **k: answer)
         self.assertEqual(got[0]["items"][0]["status"], "da_creare")
+
+    def test_many_lessons_are_split_in_small_calls_and_a_failed_call_loses_only_its_lessons(self):
+        lessons = [Lesson("algebra", f"2026-10-{d:02d}", f"lezione {d}", "x") for d in range(1, 11)]
+        calls = []
+
+        def ask(prompt, *a, **k):
+            dates = [l.date for l in lessons if f"[{l.date}]" in prompt]
+            calls.append(dates)
+            return None if len(calls) == 2 else {"lessons": [{"date": d, "items": []} for d in dates]}
+        got = analyze(COURSE, lessons, make_vault(), ask=ask)
+        self.assertEqual([len(c) for c in calls], [4, 4, 2])
+        self.assertEqual([l["date"] for l in got], calls[0] + calls[2])
+
+    def test_analyze_is_none_only_when_every_call_fails(self):
+        lessons = [Lesson("algebra", f"2026-10-{d:02d}", "x", "x") for d in range(1, 6)]
+        self.assertIsNone(analyze(COURSE, lessons, make_vault(), ask=lambda *a, **k: None))
 
 
 if __name__ == "__main__":

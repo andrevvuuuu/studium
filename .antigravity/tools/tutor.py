@@ -185,7 +185,7 @@ def analyze(course: Course, lessons: List[Lesson], vault: Path, ask: Callable[..
     answered = False
     for i in range(0, len(lessons), ANALYZE_CHUNK):
         chunk = lessons[i:i + ANALYZE_CHUNK]
-        raw = ask(build_prompt(course, chunk, notes), ANALYZE_SCHEMA, model=TUTOR_MODEL, timeout_sec=180)
+        raw = ask(build_prompt(course, chunk, notes), ANALYZE_SCHEMA, model=TUTOR_MODEL, timeout_sec=90)
         if raw is None:
             continue
         answered = True

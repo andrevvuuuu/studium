@@ -164,6 +164,13 @@ module.exports = function injectAgStyle() {
         .ag-tutor-lavoro .ag-tutor-pill, .ag-tutor-recupero .ag-tutor-pill { color: var(--ag-active); font-weight: 600; }
         .ag-tutor.is-open .ag-tutor-pill { display: none; }
         .ag-tutor-pill { margin-left: auto; }
+        .ag-tutor.in-sidebar .ag-tutor-pill {
+            width: 100%;
+            height: auto;
+            white-space: normal;
+            text-align: center;
+            line-height: 1.3;
+        }
         .ag-tutor-card .ag-tutor-min { font-size: 16px; line-height: 1; }
         .ag-tutor-card {
             width: 372px;

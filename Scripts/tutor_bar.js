@@ -130,6 +130,7 @@ function place(root) {
     const rect = side && side.getBoundingClientRect();
     if (!rect || rect.width < 120) {
         for (const k of ["top", "left", "right", "max-width"]) root.style.removeProperty(k);
+        root.classList.remove("in-sidebar");
         return;
     }
     const panes = [...side.querySelectorAll(":scope .workspace-tabs")].filter(p => p.offsetHeight > 0)
@@ -138,11 +139,14 @@ function place(root) {
     let top = lower ? lower.top + 56 : rect.bottom - 120;
     const height = root.offsetHeight || 34;
     top = Math.max(rect.top + 12, Math.min(top, window.innerHeight - 12 - height));
+    const open = root.classList.contains("is-open");
     root.style.top = `${Math.round(top)}px`;
     root.style.right = `${Math.round(Math.max(8, window.innerWidth - rect.right + 12))}px`;
-    root.style.left = "auto";
-    // Chiusa, la pillola sta nella barra laterale; aperta, la scheda può uscirne verso sinistra
-    root.style.maxWidth = root.classList.contains("is-open") ? "" : `${Math.round(rect.width - 24)}px`;
+    // Chiusa, la pillola occupa la larghezza della barra laterale con la scritta centrata (va a capo se serve);
+    // aperta, la scheda resta attaccata al bordo destro e si allarga verso sinistra sopra la nota
+    root.style.left = open ? "auto" : `${Math.round(rect.left + 12)}px`;
+    root.style.maxWidth = "";
+    root.classList.toggle("in-sidebar", !open);
 }
 
 function watchPlacement(root) {

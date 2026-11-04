@@ -129,3 +129,19 @@ def read_gmail_forum(secrets: Dict[str, str], course: str, start_year: int, cors
     url = gmail_request_url(secrets, corso)
     with urllib.request.urlopen(url, timeout=20) as resp:
         return handle_gmail_response(json.loads(resp.read().decode("utf-8")), course, start_year)
+
+
+def parse_forum_paste(text: str, course: str, start_year: int) -> List[Lesson]:
+    """Lo storico del forum copiato dalla pagina di Moodle: un titolo "Lezione del …" per post, poi autore e
+    "Numero di risposte", poi il diario. Serve per le lezioni pubblicate prima dell'iscrizione alle email."""
+    messages: List[Dict[str, str]] = []
+    for line in text.splitlines():
+        clean = line.strip().strip("#*").strip()
+        if re.match(r"Lezione\s+(?:del|dell'|dello|della)\b", clean, re.I):
+            messages.append({"subject": clean, "body": "", "header": "1"})
+        elif messages and messages[-1]["header"]:
+            if clean.lower().startswith("numero di risposte"):
+                messages[-1]["header"] = ""
+        elif messages and clean:
+            messages[-1]["body"] += clean + "\n"
+    return parse_forum_messages(messages, course, start_year)

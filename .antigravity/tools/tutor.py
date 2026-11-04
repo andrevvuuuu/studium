@@ -543,7 +543,16 @@ def main() -> int:
     ap.add_argument("--measure", metavar="COURSE", help="Costo reale di una chiamata sull'ultima lezione del corso")
     ap.add_argument("--batch-config", nargs=2, metavar=("COURSE", "DATE"), help="Prepara la creazione delle note di una lezione")
     ap.add_argument("--edit-config", nargs=3, metavar=("COURSE", "DATE", "NOTE"), help="Prepara il completamento di una nota")
+    ap.add_argument("--import-paste", nargs=2, metavar=("COURSE", "FILE"), help="Aggiungi all'archivio lo storico del forum copiato da Moodle")
     args = ap.parse_args()
+    if args.import_paste:
+        from diary_sources import parse_forum_paste
+        from tutor_store import append_new, load_courses
+        course = next(c for c in load_courses(TUTOR_DIR / "courses.json") if c.id == args.import_paste[0])
+        lessons = parse_forum_paste(Path(args.import_paste[1]).read_text(encoding="utf-8"), course.id, course.start_year)
+        added = append_new(STORE, lessons)
+        print(f"{len(lessons)} lezioni lette, {len(added)} nuove")
+        return 0
     if args.batch_config:
         print(write_batch_config(*args.batch_config))
         return 0

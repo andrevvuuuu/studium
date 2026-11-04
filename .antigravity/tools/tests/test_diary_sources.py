@@ -83,3 +83,24 @@ class TestGmailForum(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestForumPaste(unittest.TestCase):
+    PASTE = (
+        "###   Lezione del 1° ottobre 2026\n\n"
+        "di [Luigi Orsina](https://elearning.uniroma1.it/user/view.php?id=1) - giovedì, 1 ottobre 2026, 16:53\n\n"
+        "Numero di risposte: 0\n\n"
+        "Introduzione e regole del corso.\n\nInsiemi numerici.\n\n"
+        "**Lezione dell'8 ottobre 2026**  \n"
+        "di [Luigi Orsina](https://x) - giovedì, 8 ottobre 2026, 16:25  \n"
+        "Numero di risposte: 0\n\n"
+        "Ripasso: assioma di completezza.\n"
+    )
+
+    def test_one_lesson_per_heading_without_moodle_header(self):
+        from diary_sources import parse_forum_paste
+        got = parse_forum_paste(self.PASTE, "analisi", 2026)
+        self.assertEqual([l.date for l in got], ["2026-10-01", "2026-10-08"])
+        self.assertEqual(got[0].text, "Introduzione e regole del corso.\nInsiemi numerici.")
+        self.assertEqual(got[1].text, "Ripasso: assioma di completezza.")
+        self.assertEqual(got[0].source, "gmail_forum")

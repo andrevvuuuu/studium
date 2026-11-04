@@ -82,6 +82,14 @@ class TestValidate(unittest.TestCase):
         self.assertIn("DOVE VA IL CONTENUTO", prompt)
         self.assertIn("nota sua", prompt)
 
+    def test_items_for_the_same_new_note_are_merged(self):
+        raw = {"lessons": [{"date": "2026-10-26", "items": [
+            {"concept": "Divisioni successive", "kind": "concetto", "status": "da_creare", "title": "Algoritmo Euclideo", "reason": "a"},
+            {"concept": "Coefficienti di Bézout", "kind": "concetto", "status": "da_creare", "title": "algoritmo euclideo", "reason": "b"}]}]}
+        items = validate(raw, NOTES)[0]["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["concept"], "Divisioni successive; Coefficienti di Bézout")
+
     def test_item_without_reason_is_dropped(self):
         raw = {"lessons": [{"date": "2026-10-26", "items": [{"concept": "X", "kind": "concetto", "status": "da_creare", "title": "X", "reason": ""}]}]}
         self.assertEqual(validate(raw, NOTES)[0]["items"], [])

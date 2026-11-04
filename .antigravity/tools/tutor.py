@@ -176,6 +176,14 @@ def validate(raw: Any, notes: List[Dict[str, Any]], dates: Optional[set] = None,
                     item.pop("title", None)
                 else:
                     item["title"] = planned.get(norm(item.get("title", "")), item.get("title") or item.get("concept", ""))
+            # Una voce per nota: agy a volte divide in più voci i pezzi della stessa nota da creare o completare
+            target = (item["status"], norm(item.get("title") or item.get("note", ""))) if item["status"] != "coperto" else None
+            twin = next((x for x in items if target and (x["status"], norm(x.get("title") or x.get("note", ""))) == target), None)
+            if twin:
+                for k in ("concept", "missing"):
+                    if item.get(k) and item[k] not in twin.get(k, ""):
+                        twin[k] = f"{twin[k]}; {item[k]}" if twin.get(k) else item[k]
+                continue
             items.append(item)
         out.append({"date": lesson["date"], "items": items})
     return out

@@ -109,6 +109,20 @@ class TestAnalyze(unittest.TestCase):
         self.assertEqual([len(c) for c in calls], [4, 4, 2])
         self.assertEqual([l["date"] for l in got], calls[0] + calls[2])
 
+    def test_titles_proposed_by_an_earlier_group_are_shown_to_the_next_ones(self):
+        lessons = [Lesson("algebra", f"2026-10-{d:02d}", "x", "x") for d in range(1, 6)]
+        prompts = []
+
+        def ask(prompt, *a, **k):
+            prompts.append(prompt)
+            dates = [l.date for l in lessons if f"[{l.date}]" in prompt]
+            return {"lessons": [{"date": d, "items": [{"concept": "Algebra dei limiti", "kind": "teorema", "status": "da_creare",
+                                                        "title": "algebra dei limiti di successioni" if len(prompts) == 2 else "Algebra dei Limiti di Successioni",
+                                                        "reason": "manca"}]} for d in dates]}
+        got = analyze(COURSE, lessons, make_vault(), ask=ask)
+        self.assertIn("Algebra dei Limiti di Successioni", prompts[1].split("PREVISTE")[1])
+        self.assertEqual({it["title"] for l in got for it in l["items"]}, {"Algebra dei Limiti di Successioni"})
+
     def test_analyze_is_none_only_when_every_call_fails(self):
         lessons = [Lesson("algebra", f"2026-10-{d:02d}", "x", "x") for d in range(1, 6)]
         self.assertIsNone(analyze(COURSE, lessons, make_vault(), ask=lambda *a, **k: None))

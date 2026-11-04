@@ -85,23 +85,38 @@ function prepare(vaultBasePath, args) {
 }
 
 async function act(app, vaultBasePath, kind, lesson, button) {
+    const buttons = () => document.querySelectorAll(".ag-tutor-actions button");
+    const tp = window._agTutorTp;
+    if (!tp) {
+        notice("Tutor: premi Cmd+Alt+T e riprova");
+        return;
+    }
     // Un clic solo: il secondo partirebbe mentre il primo prepara la config e lancerebbe un doppione
-    document.querySelectorAll(".ag-tutor-actions button").forEach(b => { b.disabled = true; });
-    if (button) button.textContent = "Avvio…";
+    buttons().forEach(b => { b.disabled = true; });
+    const label = button ? button.textContent : "";
+    if (button) button.textContent = "Preparo…";
     try {
         const menu = require(path.join(vaultBasePath, "Scripts", "antigravity_menu.js"));
+        // Il menu di Antigravity, già compilato con la lezione: fonti, conoscenza e istruzioni le scegli tu
         if (kind === "create") {
-            menu.launchBatch(app, vaultBasePath, await prepare(vaultBasePath, ["--batch-config", lesson.course, lesson.date]));
+            const cfg = await prepare(vaultBasePath, ["--batch-config", lesson.course, lesson.date]);
+            await menu.runTutorFlow(tp, app, vaultBasePath, { kind: "create", date: lesson.date, cfg });
         } else {
-            for (const it of lesson.items.filter(i => i.status === "da_completare")) {
+            const todo = lesson.items.filter(i => i.status === "da_completare");
+            const it = todo.length > 1
+                ? await tp.system.suggester(todo.map(i => `🛠️ ${i.note}: ${i.missing || i.concept}`), todo, false, "Quale nota completare?")
+                : todo[0];
+            if (it) {
                 const job = await prepare(vaultBasePath, ["--edit-config", lesson.course, lesson.date, it.note]);
-                menu.launchJob(app, vaultBasePath, job);
-                break; // una modifica alla volta: la pipeline di Antigravity lavora su un job per volta
+                await menu.runTutorFlow(tp, app, vaultBasePath, { kind: "edit", date: lesson.date, job });
             }
         }
     } catch (e) {
         notice(`Tutor: ${e.message}`);
-        document.querySelectorAll(".ag-tutor-actions button").forEach(b => { b.disabled = false; });
+    } finally {
+        // Se il menu è stato annullato i pulsanti tornano usabili; se un job è partito la barra si ridisegna da sola
+        buttons().forEach(b => { b.disabled = false; });
+        if (button) button.textContent = label;
     }
 }
 

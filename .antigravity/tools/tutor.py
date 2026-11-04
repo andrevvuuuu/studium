@@ -189,7 +189,14 @@ def analyze(course: Course, lessons: List[Lesson], vault: Path, ask: Callable[..
         if raw is None:
             continue
         answered = True
-        out += validate(raw, notes, dates={l.date for l in chunk}, vault_titles=vault_titles)
+        got = validate(raw, notes, dates={l.date for l in chunk}, vault_titles=vault_titles)
+        out += got
+        # I titoli nuovi diventano "previsti" per i gruppi dopo: un concetto ripreso in più lezioni ha un solo nome
+        known = {n["title"].lower() for n in notes}
+        for it in (it for l in got for it in l["items"] if it["status"] == "da_creare"):
+            if it["title"].lower() not in known:
+                known.add(it["title"].lower())
+                notes = notes + [{"title": it["title"], "aliases": [], "headings": [], "exists": False}]
     return out if answered else None
 
 
@@ -508,7 +515,9 @@ def write_batch_config(course_id: str, date: str) -> Path:
     if plan.get("error"):
         raise SystemExit(plan["error"])
     wanted = {n["title"].lower(): n for n in notes}
-    cfg_notes = [dict(p, diary=wanted[p["title"].lower()]["diary"], lessons=wanted[p["title"].lower()]["lessons"])
+    # target_file_path: se dalla barra si sceglie un'altra fonte, la nota diventa un job singolo nella stessa cartella
+    cfg_notes = [dict(p, diary=wanted[p["title"].lower()]["diary"], lessons=wanted[p["title"].lower()]["lessons"],
+                      target_file_path=moc_batch.resolve_note_path(VAULT, p["title"], plan["discipline"], course.moc))
                  for p in plan["notes"] if p["title"].lower() in wanted]
     cfg = {"moc": plan["moc"], "moc_name": plan["moc_name"], "discipline": plan["discipline"],
            "allow_base_knowledge": False, "parallel": 2, "notes": cfg_notes}
@@ -542,7 +551,9 @@ def write_edit_config(course_id: str, date: str, note_title: str) -> Path:
     course = next(c for c in load_courses(TUTOR_DIR / "courses.json") if c.id == course_id)
     plan = moc_batch.build_plan(VAULT, course.moc)
     base = moc_batch.build_job({"discipline": plan["discipline"], "moc": course.moc},
-                               {"title": note_title, "notebooks": plan["moc_notebooks"]}, VAULT) if plan.get("moc_notebooks") else {}
+                               {"title": note_title, "notebooks": plan["moc_notebooks"]}, VAULT) if plan.get("moc_notebooks") else {
+        "discipline": plan["discipline"], "disciplina": plan["discipline"],
+        "pole": "università" if plan["discipline"] in moc_batch.UNIVERSITY_DISCIPLINES else "personale"}
     job = edit_job(state, course_id, date, note_title, lesson_text(course_id, date), str(path.relative_to(VAULT)), base)
     out = moc_batch.RUNTIME_DIR / "current-job.json"
     out.parent.mkdir(parents=True, exist_ok=True)

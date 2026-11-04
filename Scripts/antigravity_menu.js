@@ -2493,6 +2493,131 @@ module.exports = async function (tp) {
 };
 
 // Usati dalla barra del tutor (Scripts/tutor_bar.js)
+/**
+ * Dalla barra del tutor: le note di una lezione da creare o completare, con i valori già compilati dal tutor
+ * (titolo, cartella, diario, NotebookLM del corso). Prima di partire si scelgono le fonti, la modalità
+ * di conoscenza e, per le modifiche, il tipo di modifica e le istruzioni.
+ */
+async function runTutorFlow(tp, app, vaultBasePath, pre) {
+    const nbNames = nbs => nbs.map(n => n.title || n.id).join(", ");
+    const pickSources = async (current, allowOther, headline) => {
+        const opts = [];
+        if (current.length) opts.push({ label: `🧠 NotebookLM del corso: ${nbNames(current)}`, value: "course" });
+        opts.push({ label: "🧠 Scegli altri NotebookLM", value: "nlm" });
+        if (allowOther) opts.push({ label: "📂 Un'altra fonte (YouTube, sito, file locali)", value: "other" });
+        return tp.system.suggester(opts.map(o => o.label), opts.map(o => o.value), false, headline);
+    };
+    const nlmSource = (details, allowBase) => ({
+        type: "notebooklm",
+        label: details.length === 1 ? `NotebookLM: ${details[0].title}` : `NotebookLM Multiplo (${details.length} fonti: ${nbNames(details)})`,
+        value: details, notebooks: details.map(d => d.id), notebook_details: details, allow_base_knowledge: allowBase
+    });
+    const withSource = (job, source) => {
+        const isNlm = source.type === "notebooklm";
+        const details = isNlm ? source.notebook_details : [];
+        return Object.assign(job, {
+            source, allow_base_knowledge: isNlm ? source.allow_base_knowledge === true : true,
+            notebooks: details.map(d => d.id), notebook_details: details,
+            notebook_id: details.length ? details[0].id : null, notebook_title: isNlm ? source.label : null
+        });
+    };
+    const startJob = job => {
+        job.timestamp = new Date().toISOString();
+        job.status = "pending";
+        preRunCleanup(vaultBasePath, job.target_file_path);
+        fs.writeFileSync(path.join(getRuntimeDir(), "current-job.json"), JSON.stringify(job, null, 2), "utf8");
+        runGitBackupSnapshot(vaultBasePath);
+        launchBackgroundJob(app, vaultBasePath, job);
+    };
+    const askNotebooks = async headline => {
+        const nlm = await selectNotebookLMInteractive(tp, headline, vaultBasePath, false);
+        return nlm && nlm.notebook_details && nlm.notebook_details.length ? nlm.notebook_details : null;
+    };
+
+    if (pre.kind === "create") {
+        const cfg = pre.cfg;
+        let notes = cfg.notes;
+        if (notes.length > 1) {
+            const opts = [{ label: `▶️ Tutte le ${notes.length} note: ${notes.map(n => n.title).join(", ")}`, value: notes }]
+                .concat(notes.map(n => ({ label: `📝 Solo «${n.title}»`, value: [n] })));
+            notes = await tp.system.suggester(opts.map(o => o.label), opts.map(o => o.value), false, `Tutor 1/3: Quali note creare per la lezione del ${pre.date}?`);
+            if (!notes) return;
+        }
+        const current = (notes[0].notebooks || []);
+        const choice = await pickSources(current, notes.length === 1, "Tutor 2/3: Da quali fonti?");
+        if (!choice) return;
+        if (choice === "other") {
+            const source = await selectSourceInteractive(tp, app, vaultBasePath, "Tutor 3/3: Scegli la fonte");
+            if (!source) return;
+            const n = notes[0];
+            const discipline = cfg.discipline;
+            startJob(withSource({
+                operation: "normal", operation_type: "normal", operation_label: "Nota Normale (Nuova)", moc_mode: null,
+                syllabus_text: "", syllabus_files: [], syllabus_diary_text: n.diary || "", lessons: n.lessons || [],
+                target_file_path: n.target_file_path, target_file_abs: path.join(vaultBasePath, n.target_file_path),
+                title: n.title, topic: n.title, edit_mode: null, user_instructions: "", layout_moc: cfg.moc || "",
+                discipline, disciplina: discipline,
+                pole: ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia"].includes(discipline) ? "università" : "personale"
+            }, source));
+            return;
+        }
+        let details = current;
+        if (choice === "nlm") {
+            details = await askNotebooks("Tutor 2/3: Scegli i NotebookLM");
+            if (!details) return;
+        }
+        const allowBase = await promptKnowledgeMode(tp);
+        if (allowBase === null || allowBase === undefined) return;
+        const picked = details.map(d => ({ id: d.id, title: d.title }));
+        launchBatch(app, vaultBasePath, Object.assign({}, cfg, {
+            allow_base_knowledge: allowBase,
+            notes: notes.map(n => Object.assign({}, n, { notebooks: picked }))
+        }));
+        return;
+    }
+
+    // Completamento di una nota esistente
+    const job = pre.job;
+    const modes = [
+        { label: "✏️ Integra quanto fatto a lezione (istruzioni del tutor, modificabili)", value: "surgical_prompt" },
+        { label: "➕ Fondi una nuova fonte nella nota", value: "merge_source" },
+        { label: "✨ Riformatta allo standard della disciplina", value: "reformat_standard" }
+    ];
+    const mode = await tp.system.suggester(modes.map(o => o.label), modes.map(o => o.value), false, `Tutor 1/3: Come completare «${job.title}»?`);
+    if (!mode) return;
+    let instructions = null;
+    try {
+        instructions = await tp.system.prompt("Tutor 2/3: Istruzioni (già compilate dal tutor, modificale se vuoi)", job.user_instructions || "", true, true);
+    } catch (_) {
+        return;
+    }
+    job.edit_mode = mode;
+    job.user_instructions = (instructions || "").trim();
+    if (mode === "merge_source") {
+        const source = await selectSourceInteractive(tp, app, vaultBasePath, "Tutor 3/3: La fonte da fondere nella nota");
+        if (!source) return;
+        startJob(withSource(job, source));
+        return;
+    }
+    const current = job.notebook_details || [];
+    const opts = [];
+    if (current.length) opts.push({ label: `🧠 NotebookLM del corso: ${nbNames(current)}`, value: "course" });
+    opts.push({ label: "🧠 Scegli altri NotebookLM", value: "nlm" });
+    opts.push({ label: "📄 Nessuna fonte esterna (solo la nota e il diario)", value: "none" });
+    const choice = await tp.system.suggester(opts.map(o => o.label), opts.map(o => o.value), false, "Tutor 3/3: Da quali fonti?");
+    if (!choice) return;
+    if (choice === "none") {
+        startJob(withSource(job, { type: "vault_file", label: job.title, value: job.target_file_path }));
+        return;
+    }
+    const details = choice === "nlm" ? await askNotebooks("Tutor 3/3: Scegli i NotebookLM") : current;
+    if (!details) return;
+    const allowBase = await promptKnowledgeMode(tp);
+    if (allowBase === null || allowBase === undefined) return;
+    startJob(withSource(job, nlmSource(details, allowBase)));
+}
+
 module.exports.launchBatch = launchBatch;
 module.exports.launchJob = launchBackgroundJob;
+module.exports.runTutorFlow = runTutorFlow;
 

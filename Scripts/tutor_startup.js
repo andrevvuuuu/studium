@@ -9,6 +9,8 @@ const child_process = require("child_process");
 
 module.exports = async function (tp) {
     const app = window.app;
+    // Il menu di Antigravity aperto dai pulsanti della barra ha bisogno dei prompt di Templater
+    window._agTutorTp = tp;
     const vaultBasePath = app.vault.adapter.basePath;
     const render = require(path.join(vaultBasePath, "Scripts", "tutor_bar.js"));
     const statePath = path.join(vaultBasePath, ".antigravity", "tutor", "state.json");

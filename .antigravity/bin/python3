@@ -1,0 +1,55 @@
+#!/bin/sh
+# Studium: "python3" con le librerie dell'automazione (requests, PyMuPDF, PyYAML, pydantic, trafilatura...).
+# run_job.sh, correggi_moc.sh, il menu e la barra del tutor mettono questa cartella per prima nel PATH:
+# così ogni "python3" usa un interprete che ha le librerie, anche se Homebrew ne installa uno senza.
+# Ordine: $STUDIUM_PYTHON, il Python di python.org (Framework), gli altri python3 del PATH.
+# La scelta resta in cache nella cartella runtime (in /tmp) per non ripetere il controllo a ogni chiamata.
+
+SELF_DIR=$(cd "$(dirname "$0")" && pwd)
+CACHE="${ANTIGRAVITY_RUNTIME_DIR:-/tmp/antigravity_runtime}/studium-python"
+
+if [ -z "$STUDIUM_PYTHON" ] && [ -f "$CACHE" ]; then
+    P=$(cat "$CACHE" 2>/dev/null)
+    if [ -n "$P" ] && [ -x "$P" ]; then
+        exec "$P" "$@"
+    fi
+fi
+
+probe() {
+    [ -n "$1" ] && [ -x "$1" ] && "$1" -c "import requests, fitz, yaml" >/dev/null 2>&1
+}
+
+remember_and_run() {
+    mkdir -p "$(dirname "$CACHE")" 2>/dev/null && printf '%s\n' "$1" > "$CACHE" 2>/dev/null
+    exec "$@"
+}
+
+for c in "$STUDIUM_PYTHON" \
+         /Library/Frameworks/Python.framework/Versions/Current/bin/python3 \
+         /Library/Frameworks/Python.framework/Versions/3.14/bin/python3; do
+    if probe "$c"; then
+        remember_and_run "$c" "$@"
+    fi
+done
+
+OLD_IFS=$IFS
+IFS=:
+for d in $PATH; do
+    [ "$d" = "$SELF_DIR" ] && continue
+    if probe "$d/python3"; then
+        IFS=$OLD_IFS
+        remember_and_run "$d/python3" "$@"
+    fi
+done
+
+# Nessun interprete ha le librerie: primo python3 reale del PATH (gli script segnaleranno cosa manca)
+for d in $PATH; do
+    [ "$d" = "$SELF_DIR" ] && continue
+    if [ -x "$d/python3" ]; then
+        IFS=$OLD_IFS
+        exec "$d/python3" "$@"
+    fi
+done
+IFS=$OLD_IFS
+echo "Studium: python3 non trovato" >&2
+exit 127

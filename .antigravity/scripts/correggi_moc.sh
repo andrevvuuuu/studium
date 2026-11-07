@@ -12,6 +12,8 @@ set -e
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 VAULT_DIR="${ANTIGRAVITY_VAULT_DIR:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)}"
+# python3 con le librerie di Studium (vedi .antigravity/bin/python3)
+export PATH="$VAULT_DIR/.antigravity/bin:$PATH"
 NAME="${1%.md}"
 if [ -z "$NAME" ]; then
     echo "Uso: $0 \"Nome del MOC\" [--tutte]"

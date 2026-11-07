@@ -55,6 +55,21 @@ Esecuzione tassativa dello script `.antigravity/tools/pubmed_search.py` per cita
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Schoenfeld et al. (2020)** | [31855297](https://pubmed.ncbi.nlm.nih.gov/31855297/) | RCT 8 settimane su 24 soggetti allenati (*Resistance-Trained*) | Risonanza Magnetica (MRI) e Ultrasuoni (US) | Carichi pesanti (8-12 RM) e leggeri (25-30 RM) al cedimento producono simile ipertrofia sarcomerica | Piccola dimensione campionaria |
 
+#### Gerarchia delle Evidenze (vincolante per ogni affermazione empirica)
+Gli studi non si riassumono: si **pesano** e si ordinano. A parità di tema, l'evidenza di rango superiore prevale e quella inferiore non può smentirla.
+1. **Metodica di misura:** MRI / CT / ecografia panoramica (fCSA, volume) > biopsia (fCSA delle fibre) e ecografia B-mode a punto singolo (spessore muscolare) > DEXA (massa magra) > BIA. Uno studio con sola BIA non sostiene alcuna conclusione sull'ipertrofia; DEXA misura la massa magra totale, non la crescita di un muscolo. Lo spessore in un punto (es. 50% del femore) non descrive l'intero ventre.
+2. **Popolazione:** atleti avanzati con criteri oggettivi verificabili (standard di forza, livello agonistico, anni documentati) > allenati (≥1 anno documentato) > "recreationally trained" (auto-dichiarati) > principianti. Un risultato su ricreativi o principianti **non si generalizza** agli avanzati: va scritto per la popolazione studiata.
+3. **Sforzo:** cedimento concentrico oggettivo (impossibilità di completare la ripetizione) > RIR / perdita di velocità misurata > prescrizione fissa > "fatica volizionale" (interruzione soggettiva) > non descritto. Se gli studi confrontati usano sforzi diversi, dichiaralo: la differenza di risultato può dipendere dallo sforzo e non dalla variabile studiata.
+4. **Disegno e statistica:** nei disegni unilaterali (un arto per condizione) il campione è **N persone, non 2N arti**; il controllo dei fattori individuali è migliore ma c'è rischio di *cross-education* per la forza. Un p-value intra-gruppo (pre vs post) non prova la superiorità di una condizione: serve l'interazione tempo × gruppo o il confronto tra condizioni.
+
+#### Divieti
+- **Nessuna conclusione definitiva** da un solo studio, da studi con spin moderato/alto (abstract che dichiara superiorità non supportata dal test principale), da campioni con stato di allenamento ambiguo, sforzo non descritto o campione < 8 persone. Questi studi si citano solo come indizi o lacune.
+- Formula la forza dell'affermazione in modo esplicito: **solida** (≥2 studi utilizzabili concordi, almeno uno con MRI/fCSA o popolazione avanzata), **moderata** (≥1 studio utilizzabile di buon livello), **provvisoria** (studio singolo, popolazione diversa, estrapolazione meccanicistica), **insufficiente**.
+- Non equiparare EMG acuto, danno muscolare o "pump" all'ipertrofia misurata.
+
+#### Collegamento alle Note Studio
+Le schede critiche dei singoli paper stanno in `Bodybuilding/Studi/` (generate con «🔬 Nota Studio Scientifico»): frontmatter con `evidence_level`, `usable_for_conclusions`, `measurement_tools`, `training_status`, `effort`, `spin_severity`. Se uno studio citato ha una Nota Studio, collegala con il suo alias (es. `[[havers2025-2dbf13|Havers et al. 2025]]`) e rispetta il suo `evidence_level`: uno studio con `usable_for_conclusions: false` non può sostenere una regola pratica. Il blocco `<!-- LIT:BEGIN evidence -->…<!-- LIT:END evidence -->` è gestito da «🏋️ Integra Studi in una Nota Bodybuilding»: **non modificarlo e non duplicarlo** quando migliori la nota.
+
 ---
 
 ### BLOCCO 4: Contestualizzazione Dinamica dell'Atleta

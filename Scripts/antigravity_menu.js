@@ -36,7 +36,11 @@ function getRuntimeDir() {
 
 // Helper: Configurazione del PATH completo di macOS per ereditare i binari del sistema
 function getMacOSPathEnv() {
+    // .antigravity/bin/python3 sceglie un interprete con le librerie di Studium (Homebrew ne ha uno senza)
+    let studiumBin = null;
+    try { studiumBin = path.join(window.app.vault.adapter.basePath, ".antigravity", "bin"); } catch (_) {}
     const customBinPaths = [
+        ...(studiumBin ? [studiumBin] : []),
         path.join(require("os").homedir(), ".local/bin"),
         "/opt/homebrew/bin",
         "/opt/homebrew/sbin",
@@ -1875,6 +1879,119 @@ async function runCorrectnessFlow(tp, app, vaultBasePath) {
 }
 
 /**
+ * Studi scientifici di Bodybuilding (paper_note.py, via agy): avvio in background con log e avviso finale.
+ * L'ultima riga del log inizia con "RISULTATO:" o "ERRORE:".
+ */
+function spawnPaperNote(vaultBasePath, args, logName, startMsg) {
+    const script = path.join(vaultBasePath, ".antigravity", "tools", "paper_note.py");
+    const logPath = path.join(getRuntimeDir(), logName);
+    let logFd = "ignore";
+    try { logFd = fs.openSync(logPath, "w"); } catch (_) {}
+    const child = child_process.spawn("python3", [script].concat(args), {
+        cwd: vaultBasePath,
+        detached: true,
+        stdio: ["ignore", logFd, logFd],
+        env: getMacOSPathEnv()
+    });
+    child.unref();
+    if (window.Notice) new window.Notice(startMsg, 8000);
+    child.on("exit", () => {
+        let last = "";
+        try {
+            const lines = fs.readFileSync(logPath, "utf8").split("\n").filter(l => /^(RISULTATO|ERRORE):/.test(l));
+            last = lines[lines.length - 1] || "";
+        } catch (_) {}
+        const ok = last.startsWith("RISULTATO:");
+        const text = last ? last.replace(/^(RISULTATO|ERRORE):\s*/, ok ? "✅ " : "❌ ") : `Operazione conclusa. Dettaglio in ${logPath}.`;
+        if (window.Notice) new window.Notice(text, 15000);
+        const m = ok && last.match(/RISULTATO:\s*(\S.*?\.md)\b/);
+        if (m) {
+            try { window.app.workspace.openLinkText(m[1], "", true); } catch (_) {}
+        }
+    });
+}
+
+// Voce di menu "Nota Studio Scientifico": DOI / PMID / PMCID oppure un PDF del vault
+async function runPaperNoteFlow(tp, app, vaultBasePath) {
+    const pdfs = app.vault.getFiles().filter(f => f.extension === "pdf" && !f.path.startsWith("."));
+    const sourceKind = await tp.system.suggester(
+        ["🔢 DOI, PMID o PMCID (testo completo open access)", `📄 PDF presente nel vault (${pdfs.length})`],
+        ["id", "pdf"], false, "Studio 1/2: Da dove prendo lo studio?"
+    );
+    if (!sourceKind) return;
+    let source = null;
+    if (sourceKind === "id") {
+        source = await tp.system.prompt("Studio 2/2: DOI, PMID o PMCID (es. 10.1002/ejsc.70087, 41247250, PMC12621570)");
+        source = (source || "").trim();
+    } else {
+        if (!pdfs.length) {
+            if (window.Notice) new window.Notice("Nessun PDF nel vault: trascinalo prima in una cartella del vault.", 6000);
+            return;
+        }
+        pdfs.sort((a, b) => b.stat.mtime - a.stat.mtime);
+        const file = await tp.system.suggester(pdfs.map(f => `📄 ${f.basename} (${f.parent ? f.parent.path : ""})`), pdfs, false, "Studio 2/2: Scegli il PDF");
+        source = file ? file.path : null;
+    }
+    if (!source) return;
+    const overwrite = await tp.system.suggester(
+        ["▶️ Crea la nota (non sovrascrivere una nota già verificata)", "🔁 Rigenera anche se la nota esiste già"],
+        [false, true], false, "Se la Nota Studio esiste già?"
+    );
+    if (overwrite === null || overwrite === undefined) return;
+    spawnPaperNote(vaultBasePath, ["paper", source].concat(overwrite ? ["--overwrite"] : []), "paper-note.log",
+        "🔬 Nota Studio avviata: testo completo, estrazione con agy e verifica statistica (circa 3-6 minuti). Finirà in Bodybuilding/Studi/.");
+}
+
+// Voce di menu "Integra Studi in una Nota Bodybuilding"
+async function runConceptEvidenceFlow(tp, app, vaultBasePath) {
+    const studiDir = "Bodybuilding/Studi/";
+    const studies = app.vault.getMarkdownFiles().filter(f => f.path.startsWith(studiDir));
+    if (!studies.length) {
+        if (window.Notice) new window.Notice("Nessuna Nota Studio in Bodybuilding/Studi/: creane prima una con «Nota Studio Scientifico».", 7000);
+        return;
+    }
+    const notes = app.vault.getMarkdownFiles().filter(f => !f.path.startsWith(".") && !f.path.startsWith(studiDir)
+        && (f.path.startsWith("Bodybuilding/") || String(app.metadataCache.getFileCache(f)?.frontmatter?.Disciplina || "") === "Bodybuilding"));
+    const activeFile = app.workspace.getActiveFile();
+    notes.sort((a, b) => (activeFile && a.path === activeFile.path ? -1 : activeFile && b.path === activeFile.path ? 1 : a.basename.localeCompare(b.basename)));
+    if (!notes.length) {
+        if (window.Notice) new window.Notice("Nessuna nota di Bodybuilding trovata.", 5000);
+        return;
+    }
+    const target = await tp.system.suggester(
+        notes.map(f => (activeFile && f.path === activeFile.path ? `⭐ [NOTA ATTIVA] ${f.basename}` : `🏋️ ${f.basename}`)),
+        notes, false, "Integra 1/3: In quale nota di Bodybuilding inserisco gli studi?"
+    );
+    if (!target) return;
+    const kind = await tp.system.suggester(
+        ["💪 Muscolo / gruppo muscolare", "🏋️ Esercizio", "📐 Principio di allenamento (volume, ROM, cedimento...)"],
+        ["muscle_group", "exercise", "principle"], false, "Integra 2/3: Che tipo di nota è?"
+    );
+    if (!kind) return;
+    const label = f => {
+        const fm = app.metadataCache.getFileCache(f)?.frontmatter || {};
+        const alias = Array.isArray(fm.aliases) && fm.aliases.length ? fm.aliases[0] : f.basename;
+        const lvl = fm.evidence_level ? ` — evidenza ${fm.evidence_level}` : "";
+        return `${alias}: ${String(fm.title || "").slice(0, 70)}${lvl}`;
+    };
+    const chosen = [];
+    while (true) {
+        const remaining = studies.filter(f => !chosen.includes(f));
+        if (!remaining.length) break;
+        const opts = [{ label: chosen.length ? `✅ Fine (${chosen.length} studi scelti)` : "⏭️ Annulla", value: "done" }]
+            .concat(remaining.map(f => ({ label: `📑 ${label(f)}`, value: f })));
+        const pick = await tp.system.suggester(opts.map(o => o.label), opts.map(o => o.value), false,
+            `Integra 3/3: Aggiungi uno studio (scelti: ${chosen.length})`);
+        if (!pick || pick === "done") break;
+        chosen.push(pick);
+    }
+    if (!chosen.length) return;
+    spawnPaperNote(vaultBasePath, ["concept", target.path, "--kind", kind, "--papers"].concat(chosen.map(f => f.basename)),
+        "concept-evidence.log",
+        `🏋️ Integrazione di ${chosen.length} studi in «${target.basename}» avviata (circa 3-6 minuti). Viene modificato solo il blocco «Evidenza scientifica»; copia di sicurezza in .antigravity/backups.`);
+}
+
+/**
  * Funzione principale esportata per Templater
  */
 module.exports = async function (tp) {
@@ -2025,7 +2142,9 @@ module.exports = async function (tp) {
             { label: "🗺️ Crea / Aggiorna MOC (Map of Content)", value: "moc" },
             { label: "🛠️ Modifica / Migliora Nota Esistente", value: "edit" },
             { label: "🤖 Crea Note in Automatico dal MOC (Batch)", value: "moc_batch" },
-            { label: "🔎 Verifica e Correggi Note Esistenti", value: "correctness" }
+            { label: "🔎 Verifica e Correggi Note Esistenti", value: "correctness" },
+            { label: "🔬 Nota Studio Scientifico (DOI / PMID / PDF)", value: "paper_note" },
+            { label: "🏋️ Integra Studi in una Nota Bodybuilding", value: "concept_evidence" }
         ];
 
         const chosenOp = await tp.system.suggester(
@@ -2041,6 +2160,16 @@ module.exports = async function (tp) {
 
         if (chosenOp === "moc_batch") {
             await runMocBatchFlow(tp, app, vaultBasePath);
+            return "";
+        }
+
+        if (chosenOp === "paper_note") {
+            await runPaperNoteFlow(tp, app, vaultBasePath);
+            return "";
+        }
+
+        if (chosenOp === "concept_evidence") {
+            await runConceptEvidenceFlow(tp, app, vaultBasePath);
             return "";
         }
 

@@ -15,7 +15,7 @@ module.exports = async function (tp) {
     const render = require(path.join(vaultBasePath, "Scripts", "tutor_bar.js"));
     const statePath = path.join(vaultBasePath, ".antigravity", "tutor", "state.json");
     const env = Object.assign({}, process.env, {
-        PATH: [path.join(process.env.HOME || "", ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":") + ":" + (process.env.PATH || "")
+        PATH: [path.join(vaultBasePath, ".antigravity", "bin"), path.join(process.env.HOME || "", ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":") + ":" + (process.env.PATH || "")
     });
     try {
         const child = child_process.spawn("python3", [path.join(vaultBasePath, ".antigravity", "tools", "tutor.py")], {

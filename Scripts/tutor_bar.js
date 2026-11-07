@@ -69,7 +69,9 @@ function notice(msg) {
 }
 
 function macPathEnv() {
-    const extra = [path.join(process.env.HOME || "", ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+    let studiumBin = [];
+    try { studiumBin = [path.join(window.app.vault.adapter.basePath, ".antigravity", "bin")]; } catch (_) {}
+    const extra = [...studiumBin, path.join(process.env.HOME || "", ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
     return Object.assign({}, process.env, { PATH: extra.join(":") + ":" + (process.env.PATH || "") });
 }
 

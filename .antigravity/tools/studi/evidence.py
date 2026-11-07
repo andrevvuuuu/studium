@@ -8,7 +8,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from pathlib import Path
-from .models import Effort, StudyAnalysisDocument, Tool, TrainingStatus
+from .models import Effort, StudyAnalysisDocument, Tool, TrainingStatus, recompute_primary
 
 # ------------------------------------------------------------------ schemi di I/O con l'LLM
 
@@ -144,7 +144,11 @@ def build_card(ck: str, doc: StudyAnalysisDocument, meta: dict, takeaway: str = 
     findings = []
     for o in doc.outcomes:
         a = o.audit
-        eff = f"{a.label_compared}={a.recomputed:.2f} (audit {a.tier.value})" if a and a.recomputed is not None else "effetto n/d"
+        if a and a.recomputed is not None:
+            eff = f"{a.label_compared}={a.recomputed:.2f} (audit {a.tier.value})"
+        else:
+            rp = recompute_primary(doc.study_design, o)
+            eff = f"{rp[0]}={rp[1]:.2f} (ricalcolato; il paper non riporta un effect size)" if rp else "effetto non ricalcolabile (solo stime da modello)"
         p = f", {o.p_kind} p={o.p_value:.3g}" if o.p_value is not None else ""
         findings.append(f"{o.muscle_region} [{o.measurement_tool.value}] {eff}{p}")
     return EvidenceCard(

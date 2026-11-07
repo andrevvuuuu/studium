@@ -1134,9 +1134,12 @@ function launchBackgroundJob(app, vaultBasePath, jobData) {
 }
 
 // Helper: Selettore interattivo unificato per fonti esterne
-async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Passo 4/8: Seleziona la Fonte:") {
+async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Passo 4/8: Seleziona la Fonte:", discipline = "") {
+    // Bodybuilding: il motore delle evidenze cerca e analizza gli studi sull'argomento (anche insieme alle altre fonti)
+    const withStudies = discipline === "Bodybuilding";
     const normalSourceOptions = [
-        { label: "🧠 NotebookLM", value: "notebooklm" },
+        ...(withStudies ? [{ label: "🔬 Solo studi scientifici (l'AI cerca, legge e valuta gli studi sull'argomento)", value: "studies" }] : []),
+        { label: withStudies ? "🧠 NotebookLM (+ studi scientifici cercati in automatico)" : "🧠 NotebookLM", value: "notebooklm" },
         { label: "🎥 Video YouTube", value: "youtube" },
         { label: "🌐 Sito Online", value: "web" },
         { label: "📚 Lezione / File Locali", value: "local_files" }
@@ -1151,6 +1154,14 @@ async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Pa
 
     if (!chosenSourceType) {
         return null;
+    }
+
+    if (chosenSourceType === "studies") {
+        return {
+            type: "studies",
+            label: "Studi scientifici (ricerca automatica)",
+            value: ""
+        };
     }
 
     if (chosenSourceType === "youtube") {
@@ -2306,7 +2317,8 @@ module.exports = async function (tp) {
                     tp,
                     app,
                     vaultBasePath,
-                    "Passo 4/4: Seleziona la Nuova Fonte da Fondere nella Nota"
+                    "Passo 4/4: Seleziona la Nuova Fonte da Fondere nella Nota",
+                    chosenDiscipline ? chosenDiscipline.name : ""
                 );
                 if (!sourceResult) {
                     return "";
@@ -2523,7 +2535,8 @@ module.exports = async function (tp) {
                 tp,
                 app,
                 vaultBasePath,
-                "Passo 4/8: Seleziona la Fonte per la Nota Normale"
+                "Passo 4/8: Seleziona la Fonte per la Nota Normale",
+                chosenDiscipline ? chosenDiscipline.name : ""
             );
             if (!sourceResult) {
                 return "";

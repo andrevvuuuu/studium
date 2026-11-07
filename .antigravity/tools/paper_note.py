@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Optional
@@ -142,7 +143,10 @@ def agy_json(prompt: str, schema: dict, timeout: int = 1500, effort: str = "") -
     schema = inline_refs(schema)
     RUNTIME.mkdir(parents=True, exist_ok=True)
     schema_path = RUNTIME / f"schema-{hashlib.sha1(json.dumps(schema).encode()).hexdigest()[:10]}.json"
-    schema_path.write_text(json.dumps(schema), encoding="utf-8")
+    if not schema_path.exists():
+        tmp = schema_path.with_name(f".{schema_path.name}.{os.getpid()}.{threading.get_ident()}")
+        tmp.write_text(json.dumps(schema), encoding="utf-8")
+        os.replace(tmp, schema_path)
     cmd = [resolve_agy(), "-p", prompt, "--output-format", "json", "--json-schema", str(schema_path),
            "--print-timeout", f"{timeout}s"] + (["--effort", effort] if effort else [])
     try:
@@ -412,8 +416,9 @@ def extract(doi: str, user: str, retries: int = 2) -> Envelope:
     raise StepError("estrazione non valida dopo i tentativi: " + err.splitlines()[-1][:200])
 
 
-def cmd_paper(source: str, overwrite: bool) -> str:
-    src = load_source(source)
+def create_study_note(source: str, overwrite: bool = False, preloaded: Optional[dict] = None) -> Path:
+    """Testo completo -> estrazione agy -> validazione/audit -> Nota Studio + sidecar. Ritorna il percorso della nota."""
+    src = preloaded or load_source(source)
     meta = src["meta"]
     user, flags = build_user_prompt(src["doi"], meta, src["markdown"], src["flags"])
     env = extract(src["doi"], user)
@@ -430,6 +435,11 @@ def cmd_paper(source: str, overwrite: bool) -> str:
     atomic_write(DATA_DIR / f"{ck}.json", json.dumps(sidecar, ensure_ascii=False, indent=1))
     path = STUDI_DIR / f"{ck}.md"
     atomic_write(path, text)
+    return path
+
+
+def cmd_paper(source: str, overwrite: bool) -> str:
+    path = create_study_note(source, overwrite)
     fm = read_frontmatter(path)
     warn = []
     if fm.get("audit_statistical_discrepancy"):

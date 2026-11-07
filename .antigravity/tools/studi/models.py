@@ -368,9 +368,12 @@ class ConditionData(BaseModel):
 
     @model_validator(mode="after")
     def _at_least_one(self) -> "ConditionData":
-        if self.post is None and self.pre is None and self.change is None:
-            raise ValueError("ConditionData senza alcuna statistica")
+        # Ammesso anche senza statistiche (paper che riportano solo stime da modello): niente ricalcolo per l'outcome.
         return self
+
+    @property
+    def has_stats(self) -> bool:
+        return any(x is not None for x in (self.pre, self.post, self.change))
 
 
 class PairedSummary(BaseModel):
@@ -518,7 +521,10 @@ class StudyAnalysisDocument(BaseModel):
                                          f"completed_count={d.completed_count} in un disegno within-subject")
                 elif c.n_participants > d.completed_count:
                     raise ValueError(f"outcomes[{i}].{c.label}: n del braccio > completed_count")
-            o.audit = audit_outcome(self.study_design, o)
+            try:
+                o.audit = audit_outcome(self.study_design, o)
+            except (ValueError, ZeroDivisionError):
+                o.audit = None   # statistiche insufficienti per il ricalcolo: l'outcome resta, senza audit
         self.audit_statistical_discrepancy = any(
             o.audit is not None and _TIER_ORDER[o.audit.tier] >= _TIER_ORDER[Tier.WARN] for o in self.outcomes
         )
@@ -716,6 +722,28 @@ def _audit_independent(o: Outcome) -> tuple[float, str, None, None, dict, dict, 
                "SD scambiata con SEM: ratio = 1/sqrt(n)": 1.0 / math.sqrt(nmin),
                "SEM scambiata con SD: ratio = sqrt(n)": math.sqrt(nmin)}
     return recomputed, key, None, None, factors, dict(res), notes, []
+
+
+def recompute_primary(design: Design, o: Outcome) -> Optional[tuple[str, float]]:
+    """Effetto primario ricalcolato anche quando il paper non ne stampa uno: g_av (appaiati), d_ppc2 o g_s (gruppi)."""
+    try:
+        if design in _PAIRED_DESIGNS:
+            kw, _, _ = _paired_inputs(design, o)
+            return "g_av", float(paired_effect_sizes(**kw)["g_av"])
+        a, b = o.condition_a, o.condition_b
+        if b is None:
+            return None
+        na, nb = a.n_participants, b.n_participants
+        if all(c.pre is not None and c.post is not None for c in (a, b)):
+            r = ppc2_effect_size(a.pre.mean, a.post.mean, a.pre.spread.to_sd(na), na,           # type: ignore[union-attr]
+                                 b.pre.mean, b.post.mean, b.pre.spread.to_sd(nb), nb, 0.5)       # type: ignore[union-attr]
+            return "d_ppc2", float(r["d_ppc2"])
+        if a.post is not None and b.post is not None:
+            r = independent_effect_sizes(a.post.mean, a.post.spread.to_sd(na), na, b.post.mean, b.post.spread.to_sd(nb), nb)
+            return "g_s", float(r["g_s"])
+    except (ValueError, ZeroDivisionError):
+        return None
+    return None
 
 
 def audit_outcome(design: Design, o: Outcome) -> Optional[EffectAudit]:

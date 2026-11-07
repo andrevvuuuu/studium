@@ -1873,6 +1873,14 @@ def process_source_fast(
         result["raw_source_text"] = f"{discipline_name} {topic} roadmap da zero"
         return result
 
+    # 0. Fonte "Solo studi scientifici": il contenuto e' il dossier del motore delle evidenze (costruito dopo)
+    if stype == "studies":
+        topic = (job_data or {}).get("topic") or sval or ""
+        result["label"] = result["label"] or f"Studi scientifici: {topic}"
+        result["content_markdown"] = f"# Studi scientifici su: {topic}\n\n*(Il dossier delle evidenze viene costruito nella fase successiva.)*\n"
+        result["raw_source_text"] = str(topic)
+        return result
+
     # 1. Fonte YouTube (Sinergia: youtube-transcript-api in 0.3s + claude-watch / FFmpeg)
     if stype == "youtube" or (isinstance(sval, str) and ("youtube.com" in sval or "youtu.be" in sval)):
         url = sval if isinstance(sval, str) else str(sval)
@@ -2611,6 +2619,35 @@ def extract_scientific_query_terms(discipline_name: str, topic: str, source_text
     return unique_queries[:3]
 
 
+EVIDENCE_ENGINE_DISCIPLINES = {"Bodybuilding"}
+
+
+def evidence_dossier_prompt_lines(auto_tool_results: Dict[str, Any], studies_only: bool = False) -> List[str]:
+    """Istruzioni per usare il dossier delle evidenze (evidence_search.py) al posto della semplice lista PubMed."""
+    dossier = auto_tool_results.get("evidence_dossier")
+    bundle = auto_tool_results.get("pubmed_evidence") or {}
+    if not dossier:
+        return []
+    lines = [
+        f"Il motore delle evidenze ha cercato gli studi sull'argomento (query: {', '.join(f'`{q}`' for q in bundle.get('queries_executed', []))}), "
+        f"ne ha analizzati **{bundle.get('analyzed', 0)} sul testo completo** ({bundle.get('usable', 0)} utilizzabili per conclusioni) "
+        "con ricalcolo dell'effect size per disegno, verifica di SEM/SD, spin e qualita', e ha creato le loro Note Studio in `Bodybuilding/Studi/`.",
+        f"- **Leggi per intero `file://{dossier}`** prima di scrivere: contiene la gerarchia degli studi gia' pesata, i risultati ricalcolati e i limiti.",
+        "- La **Tabella Obbligatoria degli Studi** si costruisce dal dossier, nello stesso ordine di peso, con queste colonne: "
+        "Studio (link alla Nota Studio, es. `[[citekey|Autore et al. Anno]]`, oppure il PMID per gli studi solo-abstract) | Disegno e Campione (N persone; arti se unilaterale) | "
+        "Popolazione | Misura | Sforzo | Risultato (effetto ricalcolato) | Peso / Utilizzabile.",
+        "- Applica la **Gerarchia delle Evidenze** e i **Divieti** del profilo disciplinare: un'evidenza di rango inferiore non smentisce una superiore; "
+        "gli studi non utilizzabili o letti solo nell'abstract non sostengono conclusioni ne' regole pratiche; ogni conclusione dichiara la sua forza (solida / moderata / provvisoria / insufficiente).",
+        "- Le regole pratiche del Blocco 6 devono indicare su quali studi del dossier si basano e per quale popolazione valgono.",
+        "- Non citare studi, numeri o PMID che non sono nel dossier.",
+    ]
+    if studies_only:
+        lines.insert(1, "- **Fonte unica di questa nota: gli studi del dossier.** Struttura la nota secondo i blocchi del profilo Bodybuilding; "
+                        "ogni affermazione empirica viene dal dossier. Anatomia e fisiologia di base possono essere spiegate solo se coerenti con il profilo e senza numeri non presenti nel dossier. "
+                        "Se il dossier non basta per una sezione, scrivilo esplicitamente come lacuna invece di riempirla.")
+    return lines + [""]
+
+
 def trigger_auto_tools_sequential(
     discipline_name: str,
     discipline_cfg: Dict[str, Any],
@@ -2619,6 +2656,8 @@ def trigger_auto_tools_sequential(
     allegati_dir: Path,
     context_dir: Path,
     tools_dir: Path,
+    progress: Optional[Any] = None,
+    force_evidence: bool = False,
 ) -> Dict[str, Any]:
     """
     Esegue gli strumenti scientifici in modo sequenziale intelligente:
@@ -2632,6 +2671,24 @@ def trigger_auto_tools_sequential(
         "science_media": None,
         "targeted_pubmed_queries": []
     }
+
+    # 0. Motore delle evidenze (Bodybuilding o fonte "Solo studi"): ricerca, selezione, analisi critica, dossier
+    if force_evidence or (discipline_name in EVIDENCE_ENGINE_DISCIPLINES and auto_tools.get("pubmed", False)):
+        try:
+            import evidence_search
+            bundle = evidence_search.build_dossier(topic, context_dir, context_text=source_text, progress=progress)
+            if bundle.get("articles"):
+                results["pubmed_evidence"] = bundle
+                results["targeted_pubmed_queries"] = bundle.get("queries_executed", [])
+                results["evidence_dossier"] = bundle.get("dossier_path")
+                sys.stderr.write(f"[Orchestrator] Evidenze: {bundle.get('analyzed')} studi analizzati, dossier {bundle.get('dossier_path')}\n")
+                auto_tools = {**auto_tools, "pubmed": False}
+            else:
+                sys.stderr.write("[Orchestrator] Evidenze: nessuno studio trovato, ripiego sulla ricerca PubMed semplice.\n")
+        except SystemExit:
+            sys.stderr.write("[Orchestrator] Evidenze: librerie mancanti, ripiego sulla ricerca PubMed semplice.\n")
+        except Exception as e:
+            sys.stderr.write(f"[Orchestrator] Evidenze non riuscite ({type(e).__name__}: {e}), ripiego sulla ricerca PubMed semplice.\n")
 
     # 1. PubMed Sequenziale Intelligente
     if auto_tools.get("pubmed", False):
@@ -3209,7 +3266,10 @@ def build_edit_operational_prompt(
         prompt_lines.append("")
         prompt_lines.append("### 4. Integrazione Studi Scientifici PubMed e Aggiornamento [[Wikilink]]")
         pubmed_data = auto_tool_results.get("pubmed_evidence")
-        if pubmed_data and pubmed_data.get("articles"):
+        dossier_lines = evidence_dossier_prompt_lines(auto_tool_results)
+        if dossier_lines:
+            prompt_lines.extend(dossier_lines)
+        elif pubmed_data and pubmed_data.get("articles"):
             prompt_lines.append(
                 f"- Sono stati estratti **{len(pubmed_data['articles'])} paper PubMed reali** basati sulla nuova fonte e sul testo della nota.\n"
                 "  Consulta `.antigravity/job-context/pubmed_evidence.json` ed integra o aggiorna la tabella degli studi scientifici con i link PMID."
@@ -3260,7 +3320,10 @@ def build_edit_operational_prompt(
         prompt_lines.append("")
         prompt_lines.append("### 3. Aggiorna la Sezione Evidenze Scientifiche e Media")
         pubmed_data = auto_tool_results.get("pubmed_evidence")
-        if pubmed_data and pubmed_data.get("articles"):
+        dossier_lines = evidence_dossier_prompt_lines(auto_tool_results)
+        if dossier_lines:
+            prompt_lines.extend(dossier_lines)
+        elif pubmed_data and pubmed_data.get("articles"):
             prompt_lines.append(
                 f"- Il motore PubMed ha estratto **{len(pubmed_data['articles'])} paper scientifici reali** basandosi sui termini della nota.\n"
                 "  Consulta `.antigravity/job-context/pubmed_evidence.json` ed inserisci o aggiorna la tabella dedicata agli studi scientifici:\n"
@@ -3560,7 +3623,11 @@ def build_operational_prompt(
 
     prompt_lines.append("### 3. Evidenze PubMed Estratte Sequenzialmente")
     pubmed_data = auto_tool_results.get("pubmed_evidence")
-    if pubmed_data and pubmed_data.get("articles"):
+    dossier_lines = evidence_dossier_prompt_lines(
+        auto_tool_results, studies_only=(source_results.get("source_type") == "studies"))
+    if dossier_lines:
+        prompt_lines.extend(dossier_lines)
+    elif pubmed_data and pubmed_data.get("articles"):
         queries_used = ", ".join([f"`{q}`" for q in pubmed_data.get("queries_executed", [])])
         prompt_lines.append(f"Il motore PubMed intelligente ha interrogato la letteratura con query estratte dal testo ({queries_used}) trovando **{len(pubmed_data['articles'])} paper reali**.")
         prompt_lines.append("Consulta `.antigravity/job-context/pubmed_evidence.json` ed inserisci nella nota la tabella con i link PMID e le metodiche d'indagine.")
@@ -4657,17 +4724,37 @@ def main() -> int:
         if op_type == "edit" and job_data.get("edit_mode") in ["surgical_prompt", "reformat_standard"]:
             should_run_auto_tools = False
 
-        if should_run_auto_tools:
+        studies_only = source_info.get("type") == "studies"
+
+        def evidence_progress(msg: str, done: int, total: int) -> None:
+            update_status(
+                vault_root=vault_root, percent=45, step_number=3, total_steps=6,
+                message=f"🔬 {msg}", detail=f"{done} di {total}" if total > 1 else "Motore delle evidenze",
+                status="running", target_file=target_rel, phase="sources",
+                progress={"done": done, "total": total, "unit": "studi"} if total > 1 else None,
+            )
+
+        if should_run_auto_tools or studies_only:
             print(f"🔬 Esecuzione PubMed e Tool Scientifici sequenziali per '{discipline_name}'...")
             auto_tool_results = trigger_auto_tools_sequential(
                 discipline_name=discipline_name,
                 discipline_cfg=discipline_cfg,
                 topic=topic_str,
-                source_text=source_results.get("raw_source_text", ""),
+                source_text=source_results.get("raw_source_text", "") if not studies_only else "",
                 allegati_dir=allegati_dir,
                 context_dir=context_dir,
                 tools_dir=tools_dir,
+                progress=evidence_progress,
+                force_evidence=studies_only,
             )
+
+        if studies_only:
+            dossier_path = auto_tool_results.get("evidence_dossier")
+            if not dossier_path or not Path(dossier_path).exists():
+                raise RuntimeError(f"Nessuno studio scientifico trovato su '{topic_str}': prova a riformulare l'argomento")
+            source_results["content_markdown"] = Path(dossier_path).read_text(encoding="utf-8")
+            source_results["raw_source_text"] = source_results["content_markdown"]
+            (context_dir / "source_content.md").write_text(source_results["content_markdown"], encoding="utf-8")
 
         pubmed_studies_count = len(auto_tool_results.get("pubmed_evidence", {}).get("articles", []) if auto_tool_results.get("pubmed_evidence") else [])
 

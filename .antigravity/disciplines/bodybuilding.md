@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > **Polo:** `#personale` | **Tag:** `#bodybuilding`  
 > Questo profilo stabilisce l'architettura scientifica, anatomica ed evidenziale per tutte le note di Ipertrofia Muscolare, Neuromeccanica, Esercizi, Programmazione e Fisiologia dell'Esercizio con Sovraccarichi.  
-> **Integrazione Tool Obbligatoria:** `pubmed_search.py` (interrogazione tassativa per ogni nota/esercizio) e `youtube_watch.py` (estrazione fotogrammi di setup e curve di resistenza).
+> **Integrazione Tool Obbligatoria:** motore delle evidenze `evidence_search.py` (ricerca e analisi critica degli studi per ogni nota/esercizio) e `youtube_watch.py` (estrazione fotogrammi di setup e curve di resistenza).
 
 ---
 
@@ -48,7 +48,7 @@ Ogni nota di Bodybuilding attiva i blocchi modulari pertinenti alla fonte analiz
 ---
 
 ### BLOCCO 3: Evidenza Empirica e Letteratura (PubMed Live Engine)
-Esecuzione tassativa dello script `.antigravity/tools/pubmed_search.py` per citare solo studi scientifici reali con PMID validi.
+Il motore delle evidenze (`.antigravity/tools/evidence_search.py`) cerca gli studi sull'argomento, sceglie quelli pertinenti, analizza sul testo completo quelli open access (Note Studio in `Bodybuilding/Studi/`) e scrive il **dossier delle evidenze** del job. Si citano solo gli studi del dossier, con il link alla loro Nota Studio o il PMID, rispettandone peso e utilizzabilità.
 
 #### Tabella Obbligatoria degli Studi
 | Studio e Anno | PMID | Disegno Sperimentale e Campione | Metodica di Misura | Risultato Chiave e Conclusioni | Limiti dello Studio |

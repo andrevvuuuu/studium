@@ -181,7 +181,7 @@ def analyze_primary(c: Dict[str, Any]) -> Dict[str, Any]:
         _log(f"{_label(c)}: acquisizione fallita ({e})")
         return out
     try:
-        path = pn.create_study_note("", overwrite=False, preloaded=src)
+        path = pn.create_study_note("", overwrite=False, preloaded=src, retries=1)
     except pn.StepError as e:
         if "esiste gia'" in str(e):
             ck = pn.resolve_study(src["doi"])
@@ -303,13 +303,14 @@ def build_dossier(topic: str, out_dir: Path, context_text: str = "", progress: O
 
     results: List[Dict[str, Any]] = []
     done = 0
-    say(f"Analisi critica degli studi sul testo completo", 0, len(primary))
+    msg = f"Analisi critica di {len(primary)} studi sul testo completo (3-6 min ciascuno, {max(1, workers)} alla volta)"
+    say(msg, 0, len(primary))
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
         futs = {ex.submit(analyze_primary, c): c for c in primary}
         for f in concurrent.futures.as_completed(futs):
             results.append(f.result())
             done += 1
-            say(f"Analisi critica degli studi sul testo completo", done, len(primary))
+            say(msg, done, len(primary))
 
     order = {id(c): i for i, c in enumerate(primary)}
     results.sort(key=lambda r: order.get(id(r["candidate"]), 0))

@@ -72,7 +72,10 @@ from studi.sections import segment
 from studi.templates import join_note, render_evidence_block, render_paper_note, split_note, strip_block, upsert_block, wrap
 
 UA = {"User-Agent": "StudiumObsidian/1.0 (personal literature notes)"}
-MAX_SECTION_CHARS = 24000
+MAX_SECTION_CHARS = 20000
+SECTION_LIMITS = {"methods": 20000, "methods_supplement": 8000, "results": 20000, "discussion": 6000}
+EXTRACT_TIMEOUT = int(os.environ.get("ANTIGRAVITY_STUDY_TIMEOUT", "600"))      # secondi per singola estrazione
+EXTRACT_EFFORT = os.environ.get("ANTIGRAVITY_STUDY_EFFORT", "medium")
 
 
 def resolve_vault_root() -> Path:
@@ -387,7 +390,7 @@ def build_user_prompt(doi: str, meta: dict, markdown: str, flags: list[str]) -> 
     for key, label in (("methods", "METHODS"), ("methods_supplement", "SUPPLEMENTARY METHODS"),
                        ("results", "RESULTS"), ("discussion", "DISCUSSION")):
         if key in seg.sections:
-            parts.append(f"## {label}\n{seg.sections[key][:MAX_SECTION_CHARS]}")
+            parts.append(f"## {label}\n{seg.sections[key][:SECTION_LIMITS[key]]}")
             used = used or key in ("methods", "results")
     if not used:
         flags.append("segmentation_failed_full_text_fallback")
@@ -396,13 +399,64 @@ def build_user_prompt(doi: str, meta: dict, markdown: str, flags: list[str]) -> 
     return "\n\n".join(parts), flags
 
 
+def _valid_spread(sp: Any) -> bool:
+    if not isinstance(sp, dict):
+        return False
+    kind = sp.get("kind")
+    if kind in ("sd", "sem"):
+        return isinstance(sp.get("value"), (int, float)) and sp["value"] > 0
+    if kind == "ci95":
+        lo, hi = sp.get("lower"), sp.get("upper")
+        return isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and hi > lo
+    return False
+
+
+def repair_payload(payload: dict) -> list[str]:
+    """Ripara in modo deterministico i difetti tipici dell'estrazione invece di rifarla da capo:
+    statistiche senza dispersione valida -> tolte; effetti senza valore -> tolti; blocchi vuoti -> tolti."""
+    fixes: list[str] = []
+    doc = payload.get("document") if isinstance(payload, dict) else None
+    if not isinstance(doc, dict):
+        return fixes
+    for i, o in enumerate(doc.get("outcomes") or []):
+        if not isinstance(o, dict):
+            continue
+        for cname in ("condition_a", "condition_b"):
+            c = o.get(cname)
+            if not isinstance(c, dict):
+                continue
+            for st in ("pre", "post", "change"):
+                v = c.get(st)
+                if v is None:
+                    continue
+                if not isinstance(v, dict) or not isinstance(v.get("mean"), (int, float)) or not _valid_spread(v.get("spread")):
+                    c[st] = None
+                    fixes.append(f"outcomes[{i}].{cname}.{st}")
+        re_ = o.get("reported_effect")
+        if re_ is not None and (not isinstance(re_, dict) or not isinstance(re_.get("value"), (int, float))):
+            o["reported_effect"] = None
+            fixes.append(f"outcomes[{i}].reported_effect")
+        pr = o.get("paired")
+        if isinstance(pr, dict):
+            for k in ("sd_diff",):
+                if isinstance(pr.get(k), (int, float)) and pr[k] <= 0:
+                    pr[k] = None
+            if isinstance(pr.get("p_exact"), (int, float)) and not 0 < pr["p_exact"] < 1:
+                pr["p_exact"] = None
+    return fixes
+
+
 def extract(doi: str, user: str, retries: int = 2) -> Envelope:
     system = EXTRACTION_SYSTEM.replace("JSON Schema:\n<<SCHEMA>>", "The JSON Schema is enforced by the caller.")
     schema = extraction_schema()
     err = ""
     for attempt in range(retries + 1):
         log(f"Estrazione con agy (tentativo {attempt + 1}/{retries + 1})")
-        payload = agy_json(f"{system}\n\nDo not use tools: answer only from the text below.\n\n{user}{err}", schema)
+        payload = agy_json(f"{system}\n\nDo not use tools: answer only from the text below.\n\n{user}{err}", schema,
+                           timeout=EXTRACT_TIMEOUT, effort=EXTRACT_EFFORT)
+        fixes = repair_payload(payload)
+        if fixes:
+            log(f"Riparati {len(fixes)} campi incompleti senza rifare l'estrazione")
         try:
             doc = payload.get("document", {})
             doc["doi"] = doi
@@ -416,12 +470,12 @@ def extract(doi: str, user: str, retries: int = 2) -> Envelope:
     raise StepError("estrazione non valida dopo i tentativi: " + err.splitlines()[-1][:200])
 
 
-def create_study_note(source: str, overwrite: bool = False, preloaded: Optional[dict] = None) -> Path:
+def create_study_note(source: str, overwrite: bool = False, preloaded: Optional[dict] = None, retries: int = 2) -> Path:
     """Testo completo -> estrazione agy -> validazione/audit -> Nota Studio + sidecar. Ritorna il percorso della nota."""
     src = preloaded or load_source(source)
     meta = src["meta"]
     user, flags = build_user_prompt(src["doi"], meta, src["markdown"], src["flags"])
-    env = extract(src["doi"], user)
+    env = extract(src["doi"], user, retries=retries)
     meta_note = {k: v for k, v in meta.items() if k not in ("abstract", "pdf_urls")}
     ck0 = make_citekey(meta_note.get("authors", []), meta_note.get("year"), meta_note.get("title", ""), env.document.doi)
     prev = STUDI_DIR / f"{ck0}.md"

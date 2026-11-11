@@ -1,0 +1,226 @@
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from diary_sources import Lesson  # noqa: E402
+from tutor import agree, analyze, build_prompt, check_proof_claims, moc_notes, validate  # noqa: E402
+from tutor_store import Course  # noqa: E402
+
+NOTES = [{"title": "Massimo Comune Divisore", "aliases": ["MCD"], "headings": ["Esistenza e unicità"], "exists": True},
+         {"title": "Algoritmo di Euclide", "aliases": [], "headings": [], "exists": True}]
+COURSE = Course("algebra", "Algebra", "01 MOC's/Algebra MOC.md", 2026, {"tipo": "malvenuto_site"})
+LESSON = Lesson("algebra", "2026-10-26", "Algoritmo di Euclide. Identità di Bézout.", "malvenuto_site", 14)
+
+
+def make_vault() -> Path:
+    vault = Path(tempfile.mkdtemp())
+    (vault / "01 MOC's").mkdir()
+    (vault / "01 MOC's" / "Algebra MOC.md").write_text(
+        "---\nType:\n  - MOC\n---\n# Algebra\n\n## Divisibilità\n- [[Massimo Comune Divisore]]\n- [[Numeri Primi]]\n", encoding="utf-8")
+    (vault / "Matematica").mkdir()
+    (vault / "Matematica" / "Massimo Comune Divisore.md").write_text(
+        "---\naliases:\n  - MCD\n---\n# Massimo Comune Divisore\n\n## Esistenza e unicità\n", encoding="utf-8")
+    return vault
+
+
+class TestMocNotes(unittest.TestCase):
+    def test_lists_notes_in_moc_order_with_aliases_and_headings(self):
+        notes = moc_notes(make_vault(), "01 MOC's/Algebra MOC.md")
+        self.assertEqual([n["title"] for n in notes], ["Massimo Comune Divisore", "Numeri Primi"])
+        self.assertEqual(notes[0]["aliases"], ["MCD"])
+        self.assertIn("Esistenza e unicità", notes[0]["headings"])
+        self.assertFalse(notes[1]["exists"])
+
+    def test_headings_skip_boilerplate_exercises_and_deep_levels(self):
+        vault = make_vault()
+        (vault / "Matematica" / "Massimo Comune Divisore.md").write_text(
+            "# MCD\n## 1. Enunciato\n### Dimostrazione\n#### Passo 1\n## Esercizio: calcolo\n"
+            "## Note e Paragrafi Collegati\n### Teoremi e Concetti Derivati (Note Successive)\n", encoding="utf-8")
+        self.assertEqual(moc_notes(vault, "01 MOC's/Algebra MOC.md")[0]["headings"], ["1. Enunciato", "Dimostrazione"])
+
+    def test_sections_without_proof_are_marked(self):
+        vault = make_vault()
+        (vault / "Matematica" / "Massimo Comune Divisore.md").write_text(
+            "# MCD\n## Esistenza\nEnunciato.\n\n*(Dimostrazione non presente nelle fonti del professore)*\n"
+            "### Esempio\nTesto.\n## Unicità\n> [!tip]- Dimostrazione\n> Passi.\n", encoding="utf-8")
+        self.assertEqual(moc_notes(vault, "01 MOC's/Algebra MOC.md")[0]["headings"],
+                         ["Esistenza [senza dimostrazione]", "Esempio", "Unicità [con dimostrazione]"])
+
+
+class TestValidate(unittest.TestCase):
+    def test_invented_existing_note_becomes_missing(self):
+        raw = {"lessons": [{"date": "2026-10-26", "items": [
+            {"concept": "Identità di Bézout", "kind": "teorema", "status": "coperto", "note": "Identità di Bézout", "reason": "c'è"}]}]}
+        item = validate(raw, NOTES)[0]["items"][0]
+        self.assertEqual(item["status"], "da_creare")
+        self.assertEqual(item["title"], "Identità di Bézout")
+
+    def test_new_title_that_exists_as_alias_is_not_created(self):
+        raw = {"lessons": [{"date": "2026-10-21", "items": [
+            {"concept": "MCD", "kind": "definizione", "status": "da_creare", "title": "MCD", "reason": "manca"}]}]}
+        item = validate(raw, NOTES)[0]["items"][0]
+        self.assertEqual(item["status"], "coperto")
+        self.assertEqual(item["note"], "Massimo Comune Divisore")
+
+    def test_unknown_or_non_iso_dates_are_dropped(self):
+        raw = {"lessons": [{"date": "2 ottobre", "items": []}, {"date": "2026-10-26", "items": []}, {"date": "2026-12-01", "items": []}]}
+        self.assertEqual([l["date"] for l in validate(raw, NOTES, dates={"2026-10-26"})], ["2026-10-26"])
+
+    def test_non_dict_answer_is_empty(self):
+        self.assertEqual(validate(["x"], NOTES), [])
+
+    def test_planned_moc_title_is_used_and_any_vault_note_counts_as_existing(self):
+        notes = NOTES + [{"title": "Relazioni di Equivalenza e Partizioni", "aliases": [], "headings": [], "exists": False}]
+        raw = {"lessons": [{"date": "2026-10-07", "items": [
+            {"concept": "Relazione di equivalenza", "kind": "definizione", "status": "da_creare", "title": "relazioni di equivalenza e partizioni", "reason": "manca"},
+            {"concept": "Sommatoria", "kind": "concetto", "status": "da_creare", "title": "Sommatorie e Produttorie", "reason": "manca"}]}]}
+        items = validate(raw, notes, vault_titles={"sommatorie e produttorie": "Sommatorie e Produttorie"})[0]["items"]
+        self.assertEqual((items[0]["status"], items[0]["title"]), ("da_creare", "Relazioni di Equivalenza e Partizioni"))
+        self.assertEqual((items[1]["status"], items[1]["note"]), ("coperto", "Sommatorie e Produttorie"))
+
+    def test_prompt_lists_planned_titles(self):
+        notes = NOTES + [{"title": "Numeri Primi", "aliases": [], "headings": [], "exists": False}]
+        self.assertIn("Numeri Primi", build_prompt(COURSE, [LESSON], notes).split("PREVISTE")[1])
+
+    def test_prompt_asks_where_missing_content_belongs(self):
+        prompt = build_prompt(COURSE, [LESSON], NOTES)
+        self.assertIn("DOVE VA IL CONTENUTO", prompt)
+        self.assertIn("nota sua", prompt)
+        self.assertIn("[senza dimostrazione]", prompt)
+        self.assertIn("[con dimostrazione]", prompt)
+
+    def test_items_for_the_same_new_note_are_merged(self):
+        raw = {"lessons": [{"date": "2026-10-26", "items": [
+            {"concept": "Divisioni successive", "kind": "concetto", "status": "da_creare", "title": "Algoritmo Euclideo", "reason": "a"},
+            {"concept": "Coefficienti di Bézout", "kind": "concetto", "status": "da_creare", "title": "algoritmo euclideo", "reason": "b"}]}]}
+        items = validate(raw, NOTES)[0]["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["concept"], "Divisioni successive; Coefficienti di Bézout")
+
+    def test_new_title_that_is_a_variant_of_an_existing_note_is_covered(self):
+        notes = NOTES + [{"title": "Teorema del Binomio di Newton", "aliases": [], "headings": [], "exists": True}]
+        raw = {"lessons": [{"date": "2026-10-16", "items": [
+            {"concept": "Binomio", "kind": "teorema", "status": "da_creare", "title": "Binomio di Newton", "reason": "r"}]}]}
+        item = validate(raw, notes)[0]["items"][0]
+        self.assertEqual((item["status"], item["note"]), ("coperto", "Teorema del Binomio di Newton"))
+
+    def test_variant_of_a_planned_title_uses_the_planned_spelling(self):
+        notes = NOTES + [{"title": "Cardinalità degli Insiemi e Numerabilità", "aliases": [], "headings": [], "exists": False}]
+        raw = {"lessons": [{"date": "2026-10-16", "items": [
+            {"concept": "Cardinalità", "kind": "concetto", "status": "da_creare", "title": "Cardinalità e Numerabilità degli Insiemi", "reason": "r"}]}]}
+        self.assertEqual(validate(raw, notes)[0]["items"][0]["title"], "Cardinalità degli Insiemi e Numerabilità")
+
+    def test_different_topics_with_shared_words_stay_apart(self):
+        raw = {"lessons": [{"date": "2026-10-16", "items": [
+            {"concept": "Algebra", "kind": "teorema", "status": "da_creare", "title": "Algebra dei Limiti di Successioni", "reason": "r"}]}]}
+        notes = NOTES + [{"title": "Limite di una Successione", "aliases": [], "headings": [], "exists": True}]
+        self.assertEqual(validate(raw, notes)[0]["items"][0]["status"], "da_creare")
+
+    def test_item_without_reason_is_dropped(self):
+        raw = {"lessons": [{"date": "2026-10-26", "items": [{"concept": "X", "kind": "concetto", "status": "da_creare", "title": "X", "reason": ""}]}]}
+        self.assertEqual(validate(raw, NOTES)[0]["items"], [])
+
+
+class TestAnalyze(unittest.TestCase):
+    def test_prompt_lists_lessons_and_notes(self):
+        prompt = build_prompt(COURSE, [LESSON], NOTES)
+        self.assertIn("Identità di Bézout", prompt)
+        self.assertIn("Massimo Comune Divisore · MCD · Esistenza e unicità", prompt)
+
+    def test_analyze_returns_none_when_agy_fails(self):
+        self.assertIsNone(analyze(COURSE, [LESSON], make_vault(), ask=lambda *a, **k: None))
+
+    def test_analyze_validates_agy_answer(self):
+        answer = {"lessons": [{"date": "2026-10-26", "items": [
+            {"concept": "Identità di Bézout", "kind": "teorema", "status": "da_creare", "title": "Identità di Bézout", "after": "Massimo Comune Divisore", "reason": "non c'è nessuna nota"}]}]}
+        got = analyze(COURSE, [LESSON], make_vault(), ask=lambda *a, **k: answer)
+        self.assertEqual(got[0]["items"][0]["status"], "da_creare")
+
+    def test_many_lessons_are_split_in_small_calls_and_a_failed_call_loses_only_its_lessons(self):
+        lessons = [Lesson("algebra", f"2026-10-{d:02d}", f"lezione {d}", "x") for d in range(1, 11)]
+        calls = []
+
+        def ask(prompt, *a, **k):
+            dates = [l.date for l in lessons if f"[{l.date}]" in prompt]
+            calls.append(dates)
+            return None if len(calls) == 2 else {"lessons": [{"date": d, "items": []} for d in dates]}
+        got = analyze(COURSE, lessons, make_vault(), ask=ask, passes=1)
+        self.assertEqual([len(c) for c in calls], [4, 4, 2])
+        self.assertEqual([l["date"] for l in got], calls[0] + calls[2])
+
+    def test_titles_proposed_by_an_earlier_group_are_shown_to_the_next_ones(self):
+        lessons = [Lesson("algebra", f"2026-10-{d:02d}", "x", "x") for d in range(1, 6)]
+        prompts = []
+
+        def ask(prompt, *a, **k):
+            prompts.append(prompt)
+            dates = [l.date for l in lessons if f"[{l.date}]" in prompt]
+            return {"lessons": [{"date": d, "items": [{"concept": "Algebra dei limiti", "kind": "teorema", "status": "da_creare",
+                                                        "title": "algebra dei limiti di successioni" if len(prompts) == 2 else "Algebra dei Limiti di Successioni",
+                                                        "reason": "manca"}]} for d in dates]}
+        got = analyze(COURSE, lessons, make_vault(), ask=ask, passes=1)
+        self.assertIn("Algebra dei Limiti di Successioni", prompts[1].split("PREVISTE")[1])
+        self.assertEqual({it["title"] for l in got for it in l["items"]}, {"Algebra dei Limiti di Successioni"})
+
+    def test_two_passes_keep_only_the_gaps_both_found(self):
+        answers = [
+            {"lessons": [{"date": "2026-10-26", "items": [
+                {"concept": "Bézout", "kind": "teorema", "status": "da_creare", "title": "Identità di Bézout", "reason": "a"},
+                {"concept": "Stirling", "kind": "teorema", "status": "da_completare", "note": "Massimo Comune Divisore", "missing": "x", "reason": "a"},
+                {"concept": "MCD", "kind": "definizione", "status": "coperto", "note": "Massimo Comune Divisore", "reason": "a"}]}]},
+            {"lessons": [{"date": "2026-10-26", "items": [
+                {"concept": "Bézout", "kind": "teorema", "status": "da_creare", "title": "Teorema di Identità di Bézout", "reason": "b"},
+                {"concept": "Stirling", "kind": "teorema", "status": "coperto", "note": "Massimo Comune Divisore", "reason": "b"}]}]}]
+        got = analyze(COURSE, [LESSON], make_vault(), ask=lambda *a, **k: answers.pop(0))
+        self.assertEqual([(i["status"], i.get("title") or i.get("note")) for i in got[0]["items"]],
+                         [("da_creare", "Identità di Bézout"), ("coperto", "Massimo Comune Divisore")])
+
+    def test_one_failed_pass_falls_back_to_the_other(self):
+        answer = {"lessons": [{"date": "2026-10-26", "items": [
+            {"concept": "Bézout", "kind": "teorema", "status": "da_creare", "title": "Identità di Bézout", "reason": "a"}]}]}
+        answers = [None, answer]
+        got = analyze(COURSE, [LESSON], make_vault(), ask=lambda *a, **k: answers.pop(0))
+        self.assertEqual(got[0]["items"][0]["status"], "da_creare")
+
+    def test_agree_matches_the_same_concept_placed_in_different_notes(self):
+        first = [{"date": "d", "items": [{"status": "da_creare", "title": "Teorema della Disuguaglianza di Bernoulli",
+                                          "concept": "Dimostrazione della disuguaglianza di Bernoulli per induzione"},
+                                         {"status": "da_creare", "title": "Algebra dei Limiti di Successioni", "concept": "Limiti divergenti"}]}]
+        second = [{"date": "d", "items": [{"status": "da_completare", "note": "Principio di Induzione Matematica",
+                                           "concept": "Disuguaglianza di Bernoulli e dimostrazione per induzione"},
+                                          {"status": "da_creare", "title": "Cardinalità degli Insiemi", "concept": "Numerabilità"}]}]
+        self.assertEqual([i["title"] for i in agree(first, second)[0]["items"]], ["Teorema della Disuguaglianza di Bernoulli"])
+
+    def test_missing_proof_needs_the_diary_to_say_it_was_proven(self):
+        diary = "Ripasso: criteri.\nFormula di Stirling.\nSerie a segni alterni e criterio di Leibniz con relativa dimostrazione."
+        got = check_proof_claims([{"date": "d", "items": [
+            {"status": "da_completare", "note": "Gerarchia degli Infiniti e Formula di Stirling", "concept": "Formula di Stirling",
+             "missing": "Dimostrazione della formula di Stirling", "reason": "r"},
+            {"status": "da_completare", "note": "Criterio di Leibniz per le Serie a Segno Alterno", "concept": "Criterio di Leibniz",
+             "missing": "Dimostrazione del criterio di Leibniz", "reason": "r"},
+            {"status": "da_completare", "note": "Convergenza Assoluta delle Serie", "concept": "Proprietà",
+             "missing": "invarianza per riordinamento", "reason": "r"}]}], {"d": diary})
+        self.assertEqual([i["status"] for i in got[0]["items"]], ["coperto", "da_completare", "da_completare"])
+        self.assertNotIn("missing", got[0]["items"][0])
+
+    def test_proof_check_skips_diaries_that_never_mention_proofs(self):
+        diary = "Teorema di esistenza e unicità di quoziente e resto sugli interi. Identità di Bézout."
+        got = check_proof_claims([{"date": "d", "items": [
+            {"status": "da_completare", "note": "Numeri Interi Relativi", "concept": "Quoziente e resto",
+             "missing": "Dimostrazione di esistenza e unicità di quoziente e resto", "reason": "r"}]}], {"d": diary})
+        self.assertEqual(got[0]["items"][0]["status"], "da_completare")
+
+    def test_agree_keeps_lessons_missing_from_the_second_pass_out(self):
+        first = [{"date": "2026-10-26", "items": [{"status": "da_creare", "title": "X Y", "reason": "r"}]}]
+        self.assertEqual(agree(first, []), [])
+
+    def test_analyze_is_none_only_when_every_call_fails(self):
+        lessons = [Lesson("algebra", f"2026-10-{d:02d}", "x", "x") for d in range(1, 6)]
+        self.assertIsNone(analyze(COURSE, lessons, make_vault(), ask=lambda *a, **k: None))
+
+
+if __name__ == "__main__":
+    unittest.main()

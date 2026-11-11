@@ -59,7 +59,7 @@ Prima di scrivere ogni sezione o risultato matematico/scientifico $R$, applica t
 - I callout di **"Conflitto Epistemico"** e i paragrafi di **"Confronto Interdisciplinare"** compaiono **solo se esistono davvero nelle fonti o aggiungono comprensione fondamentale**. Non forzare mai la presenza di queste sezioni se non giustificate dai contenuti.
 
 ### 7. Sezione Finale Unificata per gli Scorpori
-- Nella sezione finale `Note e Paragrafi Collegati`, inserisci **obbligatoriamente** la voce:
+- Se è presente la sezione finale `Note e Paragrafi Collegati`, inserisci la voce:
   `### Teoremi e Concetti Derivati (Note Separate)`
   contenente l'elenco dei teoremi, concetti derivati e metodi operativi scorporati dalla nota, ciascuno corredato da un breve raccordo logico e dal relativo [[wikilink]].
 - Usa quest'unica voce standard senza duplicarla con dizioni alternative.
@@ -114,6 +114,16 @@ Nessun passaggio concettuale, matematico, biologico, algoritmico o storico può 
 3. **Catene Causali nelle Scienze Sperimentali e Naturali:**
    - Nelle note di Neuroscienze, Biologia, Medicina, Farmacologia e Bodybuilding, i processi biologici devono essere espressi come **catene causali causa-effetto sequenziali numerate**, senza buchi temporali o salti molecolari (es. *Stimolo meccanico $\to$ apertura canali meccanosensibili Piezo1 $\to$ influsso di $\text{Ca}^{2+}$ $\to$ attivazione FAK/mTORC1 $\to$ fosforilazione p70S6K $\to$ traduzione ribosomiale*).
 
+4. **Espandere sì, inventare no (vale per ogni materia):**
+   - Spiegazioni espanse, riformulazioni e passaggi ricostruiti sono obbligatori, ma sono proprio le parti in cui nascono gli errori: le fonti del professore sono corrette, le aggiunte dell'agente no per definizione. Ogni aggiunta deve restare fedele a ciò che le fonti affermano:
+     - **Condizioni e ipotesi:** quando riformuli un enunciato, una definizione o un meccanismo, conserva tutte le sue condizioni (domini, segni, casi limite, eccezioni, contesto sperimentale), con la stessa forza.
+     - **Niente generalizzazioni:** non estendere un risultato oltre ciò che le fonti sostengono ("vale sempre", "unicamente", "in ogni caso"). Un'estensione o ha la sua giustificazione o resta fuori.
+     - **Passaggi ricostruiti:** ogni passaggio aggiunto cita la sua giustificazione (definizione, ipotesi, risultato noto con le ipotesi verificate, dato della fonte) e tratta i casi limite.
+     - **Nomi e termini:** usa la terminologia standard o quella delle fonti; non inventare etichette.
+     - **Argomenti fuori dalle fonti:** si nominano con un wikilink, senza enunciarli né spiegarli a memoria.
+     - **Fedeltà alle fonti:** se la fonte usa una formulazione corretta ma diversa da quella che preferiresti (convenzioni, notazioni, definizioni equivalenti), tieni quella della fonte.
+   - Prima di chiudere la nota rileggi una volta passaggi ricostruiti, esempi, dati e quiz con queste regole: è il controllo che costa meno, perché avviene mentre scrivi. I profili delle materie (`.antigravity/disciplines/`) aggiungono gli errori tipici della disciplina.
+
 ---
 
 ## LEGGE 3: Standard Frontmatter YAML e Tipizzazione Automatica
@@ -143,7 +153,7 @@ aliases:
      ```
    - **Vietati tassativamente valori multipli**, sintassi con pipe o parentesi quadre (`Type: [Concetto | Teorema]`), stringhe inline (`Type: Concetto`) o array inline (`Type: [Concetto]`).
 2. **Nessun cancelletto nei tag:** Nei campi YAML i tag non devono contenere `#` (Obsidian li trasforma automaticamente in tag interni).
-3. **Attributo `Disciplina`:** Deve coincidere esattamente con uno dei 20 nomi ufficiali (es. `Matematica`, `Intelligenza Artificiale`, `Bodybuilding`, `Nutrizione e Salute`, `Droghe`).
+3. **Attributo `Disciplina`:** Deve coincidere con un nome presente in `.antigravity/disciplines.json` (es. `Matematica`, `Intelligenza Artificiale`, `Bodybuilding`, `Nutrizione e Salute`, `Droghe`).
 4. **I 5 Valori Canonici del `Type`:**
    - `Concetto`: Definizioni teoriche, costrutti, fenomeni anatomici/fisiologici o entità molecolari.
    - `Teorema`: Enunciati formali matematici o leggi fisiche con ipotesi, tesi e dimostrazione formale a sé stante.
@@ -239,6 +249,8 @@ Il vault supporta tre distinte modalità di generazione dei MOC, ciascuna concep
 
 Il grafo della conoscenza di Obsidian acquista valore solo se i collegamenti sono densi, corretti, chirurgicamente precisi e privi di link orfani o generici.
 
+**Collega un'altra nota SOLO se esiste un'affinità concettuale reale (prerequisito, caso particolare, applicazione diretta). Mai link di riempimento, mai verso Matematica o corsi universitari se l'argomento non li richiede. Nessun link è meglio di un link forzato.**
+
 1. **Consultazione Obbligatoria dell'Indice e del Dossier Raccomandazioni:**
    - Prima di scrivere o modificare una nota, l'agente consulta `.antigravity/vault-index.json` e il dossier generato da `paragraph_linker.py` (`.antigravity/job-context/recommended-links.md`) per individuare esattamente quali note, paragrafi specifici e blocchi semantici collegare.
 2. **Sintassi con Alias Grammaticale nelle Note Normali vs Divieto Assoluto nei MOC:**
@@ -251,12 +263,12 @@ Il grafo della conoscenza di Obsidian acquista valore solo se i collegamenti son
    - **MAI nel Codice o nelle Formule:** Non inserire wikilink dentro blocchi LaTeX (`$$...$$` o `$...$`) né dentro blocchi di codice (`` `inline` `` o ````fenced````).
 4. **Quando usare [[Nota Intera|testo]] vs [[Nota#Paragrafo|testo]] (Precisione Chirurgica):**
    - **Link a Nota Intera:** Usa [[Nome Nota|testo]] (es. [[Numeri Interi Relativi|numeri interi]]) esclusivamente quando nel discorso ti riferisci all'oggetto o alla materia generale nel suo complesso.
-   - **Link a Paragrafo Specifico (OBBLIGATORIO):** Usa **obbligatoriamente** la sintassi di sezione [[Nome Nota#Numero e Titolo Esatto Paragrafo|testo nel discorso]] ogni volta che citi una proprietà specifica, una tecnica dimostrativa, un sottoconcetto o un passaggio matematico/ingegneristico che non ha una nota autonoma ma è trattato in un paragrafo preciso di un'altra nota (es. [[Elementi di Logica Matematica#4.2 Dimostrazione per Assurdo|dimostrazione per assurdo]] o [[Numeri Interi Relativi#4.2 Proprietà di Integrità e Legge di Cancellazione Moltiplicativa|legge di cancellazione moltiplicativa]]). Prendi i link pronti dalla **Tabella A** di `recommended-links.md`.
+   - **Link a Paragrafo Specifico (preferito quando si linka):** Usa la sintassi di sezione [[Nome Nota#Numero e Titolo Esatto Paragrafo|testo nel discorso]] quando citi una proprietà specifica, una tecnica dimostrativa o un sottoconcetto trattato in un paragrafo preciso di un'altra nota (es. [[Ricerca Binaria#Invariante del ciclo|l'invariante del ciclo]] o [[Storia della Fotografia#La camera oscura|la camera oscura]]). Prendi i link pertinenti dalla **Tabella A** di `recommended-links.md`.
 5. **Uso e Creazione di ID di Blocco Semantici (`^id-blocco`):**
    - **Quando citi un teorema o un box formalizzato:** Se il concetto citato è un singolo callout o teorema specifico presente in un'altra nota, linka direttamente il blocco con [[Nome Nota#^id-blocco|testo]] (prendendo la sintassi dalla **Tabella B** di `recommended-links.md`).
    - **Quando scrivi una nuova nota:** In fondo ai callout più importanti (`> [!theorem]`, `> [!definition]`, `> [!tip] Dimostrazione...` e `> [!note] Decodifica...` fondamentali) **aggiungi obbligatoriamente un ID di blocco semantico pulito in kebab-case** (es. `^teo-unicita-limite`, `^def-relazione-equivalenza`, `^decodifica-significato-fisico`), così le note future potranno agganciarsi direttamente a quel singolo blocco concettuale.
 6. **Sezione Finale `Note e Paragrafi Collegati`:**
-   - In fondo a ogni nota, all'interno della sezione dedicata ai collegamenti, struttura le voci in questo modo tassativo:
+   - Includi la sezione e le sue sottosezioni solo se ci sono link reali. Quando presenti, struttura le voci così:
      * **Teoremi e Concetti Derivati (Note Separate):** Sottosezione esplicita `### Teoremi e Concetti Derivati (Note Separate)` contenente l'elenco dei teoremi autonomi, concetti adiacenti o metodi d'esame scorporati dalla nota, ciascuno collegato tramite [[wikilink]] con un breve ponte logico discorsivo. Usa esclusivamente questa voce senza duplicarla con dizioni alternative.
      * **Riferimenti Puntuali a Paragrafi:** Sottosezione esplicita `### Riferimenti Puntuali a Paragrafi` che elenca e sintetizza i collegamenti diretti [[Nota#Paragrafo]] e [[Nota#^id-blocco]] impiegati nel testo.
      * **Note Generali e MOC:** Collegamenti alle note macro e di risalita al MOC di disciplina.
@@ -347,7 +359,7 @@ Le Flashcard e i Quiz non sono un riassunto mnemonico passivo, ma uno strumento 
 - **I 4 Ambiti di Indagine Obbligatori:**
   1. **Il "Perché" dei Vincoli e delle Ipotesi:** Cosa crolla se cade una specifica ipotesi? (Es. *"Perché nel teorema di Rolle è richiesta la continuità sull'intervallo chiuso e non solo sull'aperto? Quale controesempio invalida la tesi se la funzione è discontinua agli estremi?"*).
   2. **Decodifica di Formule, Simboli e Meccanismi:** Cosa rappresenta un termine specifico in una formula o un passaggio in una reazione/circuito? (Es. *"Nell'equazione di Schrödinger, cosa quantifica il termine $-\frac{\hbar^2}{2m}\nabla^2$ e perché include il segno meno?"*).
-  3. **Individuazione di Trappole d'Esame e Falsi Ragionamenti (Distrattori Plausibili):** Nei Quiz a 4 opzioni, i distrattori (opzioni errate) devono rappresentare i tipici errori commessi dagli studenti (scambio di ipotesi e tesi, errori di segno, generalizzazioni indebite). Nel campo `**EXPLANATION:**` devi analizzare esplicitamente **sia la risposta corretta sia i trabocchetti dei distrattori**.
+  3. **Individuazione di Trappole d'Esame e Falsi Ragionamenti (Distrattori Plausibili):** Nei Quiz a 4 opzioni, i distrattori (opzioni errate) devono rappresentare i tipici errori commessi dagli studenti (scambio di ipotesi e tesi, errori di segno, generalizzazioni indebite). Nel campo `**EXPLANATION:**` devi analizzare esplicitamente **sia la risposta corretta sia i trabocchetti dei distrattori**. Per ogni quiz stabilisci prima la risposta corretta, poi controlla che ogni distrattore sia davvero sbagliato; la lettera in `**CORRECT:**` e quella citata in `**EXPLANATION:**` devono coincidere.
   4. **Applicazione Pratica, Discriminazione e Calcolo Rapido:** Porre scenari operativi in cui bisogna scegliere il metodo o il setup corretto (es. *"Tra questi 4 integrali, quale non può essere risolto per parti standard e richiede la sostituzione euleriana?"*).
 
 ### 3. Sincronizzazione Automatica e Continua con Anki

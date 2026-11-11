@@ -6,16 +6,25 @@
 !/Scripts/antigravity_menu.js
 !/Scripts/run_job.sh
 !/Scripts/study_panel.js
+!/Scripts/ag_style.js
+!/Scripts/tutor_bar.js
+!/Scripts/tutor_startup.js
+!/Scripts/tutor_gmail.gs
 !/.antigravity/
 /.antigravity/*
 !/.antigravity/tools/
 !/.antigravity/scripts/
+!/.antigravity/bin/
 !/.antigravity/disciplines/
 !/.antigravity/snippets/
 !/.antigravity/core-guidelines.md
+!/.antigravity/disciplines.json
 !/.antigravity/style-examples.json
 !/.antigravity/Antigravity Trigger.md
 !/.antigravity/notify.example.json
+!/.antigravity/tutor/
+/.antigravity/tutor/*
+!/.antigravity/tutor/courses.json
 !/.github/
 !/LICENSE
 __pycache__/

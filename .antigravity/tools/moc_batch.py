@@ -37,6 +37,7 @@ from orchestrator import (  # noqa: E402
     parse_simple_frontmatter,
     resolve_vault_root,
     write_moc_notebooks_frontmatter,
+    load_disciplines,
 )
 from vault_layout import RACCORDO_HEADINGS, load_courses, resolve_note_path, sync_course  # noqa: E402
 from notify import notify  # noqa: E402
@@ -45,9 +46,8 @@ BATCH_STATUS_FILE = RUNTIME_DIR / "batch-status.json"
 BATCH_STOP_FILE = RUNTIME_DIR / "batch-stop"
 BATCH_LOG_FILE = RUNTIME_DIR / "batch-output.log"
 
-UNIVERSITY_DISCIPLINES = {
-    "Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia",
-}
+FALLBACK_UNIVERSITY_DISCIPLINES = {"Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia"}
+UNIVERSITY_DISCIPLINES = {e["name"] for e in load_disciplines(Path(__file__).resolve().parents[2]) if e.get("pole") == "università"} or FALLBACK_UNIVERSITY_DISCIPLINES
 
 # Quota NotebookLM (Google AI Pro): rete di sicurezza, interviene solo se la quota è davvero esaurita
 NLM_MIN_REMAINING_PERCENT = 1.5
@@ -358,6 +358,9 @@ def build_job(cfg: Dict[str, Any], note: Dict[str, Any], vault_root: Path) -> Di
         "allow_base_knowledge": allow_base,
         "syllabus_text": "",
         "syllabus_files": [],
+        # Dal tutor: il diario della lezione come guida e la data per il frontmatter "Lezioni"
+        "syllabus_diary_text": note.get("diary", ""),
+        "lessons": note.get("lessons", []),
         "notebook_id": notebooks[0]["id"],
         "notebook_title": label,
         "notebooks": [nb["id"] for nb in notebooks],

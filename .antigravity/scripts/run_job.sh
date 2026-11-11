@@ -16,6 +16,8 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:$HOME/Library
 # Il vault è due cartelle sopra questo script (.antigravity/scripts/), anche se lanciato da un collegamento
 VAULT_DIR="${ANTIGRAVITY_VAULT_DIR:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)}"
 RUNTIME_DIR="${ANTIGRAVITY_RUNTIME_DIR:-/tmp/antigravity_runtime}"
+# python3 con le librerie di Studium (vedi .antigravity/bin/python3)
+export PATH="$VAULT_DIR/.antigravity/bin:$PATH"
 mkdir -p "$RUNTIME_DIR"
 
 cd "$VAULT_DIR"

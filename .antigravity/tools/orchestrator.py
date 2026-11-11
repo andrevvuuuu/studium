@@ -34,7 +34,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Iniezione del PATH completo di macOS per ambienti grafici e terminali
 EXTRA_PATHS = [
@@ -73,8 +73,8 @@ def resolve_vault_index_path(vault_root: Path) -> Path:
     vault_idx = vault_root / ".antigravity" / "vault-index.json"
     return vault_idx if vault_idx.exists() else runtime_idx
 
-# Mappa delle 20 Macro-Discipline per normalizzazione degli Slug
-DISCIPLINE_SLUG_MAP = {
+# Fallback storico usato solo se il registro non è disponibile.
+_FALLBACK_DISCIPLINE_SLUG_MAP = {
     "Matematica": "matematica",
     "Informatica": "informatica",
     "Fisica": "fisica",
@@ -96,6 +96,45 @@ DISCIPLINE_SLUG_MAP = {
     "Economia e Finanza": "economia-e-finanza",
     "Psicologia": "psicologia"
 }
+
+_FALLBACK_DISCIPLINE_ALIASES = {
+    "Arte e Storia dell'Arte": ["arte", "storia dell'arte"],
+    "Biologia": ["biologia", "biologia e neuroscienze"],
+    "Neuroscienze": ["neuroscienze", "biologia e neuroscienze"],
+    "Letteratura": ["letteratura", "letteratura inglese"],
+    "Storia": ["storia", "storiа"],
+    "Politica e Geopolitica": ["politica", "geopolitica", "politica e geopolitica", "educazione civica"],
+    "Economia e Finanza": ["economia", "finanza", "economia e finanza"],
+    "Tecnologia ed Elettronica": ["tecnologia", "elettronica", "tecnologia ed elettronica"],
+    "Musica e Industria Musicale": ["musica", "industria musicale", "musica e industria musicale"],
+}
+
+def load_disciplines(vault_root: Path) -> List[dict]:
+    """Legge il registro delle discipline; in caso di errore restituisce il catalogo storico."""
+    registry = vault_root / ".antigravity" / "disciplines.json"
+    try:
+        data = json.loads(registry.read_text(encoding="utf-8"))
+        entries = data.get("disciplines")
+        if isinstance(entries, list) and all(isinstance(e, dict) and e.get("name") and e.get("slug") for e in entries):
+            return entries
+    except Exception:
+        pass
+    universities = {"Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia"}
+    return [{"name": name, "slug": slug, "pole": "università" if name in universities else "personale", "emoji": "", "aliases": _FALLBACK_DISCIPLINE_ALIASES.get(name, [])} for name, slug in _FALLBACK_DISCIPLINE_SLUG_MAP.items()]
+
+def register_discipline(vault_root: Path, entry: dict) -> None:
+    """Aggiunge o aggiorna una disciplina con sostituzione atomica del registro."""
+    registry = vault_root / ".antigravity" / "disciplines.json"
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    entries = load_disciplines(vault_root)
+    entries = [e for e in entries if e.get("name") != entry.get("name")]
+    entries.append(entry)
+    tmp = registry.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"disciplines": entries}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, registry)
+
+DISCIPLINE_SLUG_MAP = {e["name"]: e["slug"] for e in load_disciplines(Path(__file__).resolve().parents[2])}
+DISCIPLINE_DIR_ALIASES = {e["name"]: e.get("aliases", []) for e in load_disciplines(Path(__file__).resolve().parents[2])}
 
 # Dizionario Termini Scientifici Bilingue (Italiano -> Termini Medici/Biologici Inglesi per PubMed)
 SCIENTIFIC_TERM_DETECTORS = {
@@ -1074,17 +1113,6 @@ def build_vault_notes_summary(
         slug.replace("-", " ").lower(),
     ]
 
-    DISCIPLINE_DIR_ALIASES = {
-        "Arte e Storia dell'Arte": ["arte", "storia dell'arte"],
-        "Biologia": ["biologia", "biologia e neuroscienze"],
-        "Neuroscienze": ["neuroscienze", "biologia e neuroscienze"],
-        "Letteratura": ["letteratura", "letteratura inglese"],
-        "Storia": ["storia", "storiа"],
-        "Politica e Geopolitica": ["politica", "geopolitica", "politica e geopolitica", "educazione civica"],
-        "Economia e Finanza": ["economia", "finanza", "economia e finanza"],
-        "Tecnologia ed Elettronica": ["tecnologia", "elettronica", "tecnologia ed elettronica"],
-        "Musica e Industria Musicale": ["musica", "industria musicale", "musica e industria musicale"],
-    }
     extra_aliases = DISCIPLINE_DIR_ALIASES.get(discipline_name, [])
     for ea in extra_aliases:
         discipline_keywords.append(ea.lower())
@@ -1873,6 +1901,14 @@ def process_source_fast(
         result["raw_source_text"] = f"{discipline_name} {topic} roadmap da zero"
         return result
 
+    # 0. Fonte "Solo studi scientifici": il contenuto e' il dossier del motore delle evidenze (costruito dopo)
+    if stype == "studies":
+        topic = (job_data or {}).get("topic") or sval or ""
+        result["label"] = result["label"] or f"Studi scientifici: {topic}"
+        result["content_markdown"] = f"# Studi scientifici su: {topic}\n\n*(Il dossier delle evidenze viene costruito nella fase successiva.)*\n"
+        result["raw_source_text"] = str(topic)
+        return result
+
     # 1. Fonte YouTube (Sinergia: youtube-transcript-api in 0.3s + claude-watch / FFmpeg)
     if stype == "youtube" or (isinstance(sval, str) and ("youtube.com" in sval or "youtu.be" in sval)):
         url = sval if isinstance(sval, str) else str(sval)
@@ -2526,7 +2562,7 @@ def process_source_fast(
         # Prova Visiva finale Loading Bar (se multi-notebook)
         if is_multi:
             formatted_tot = f"{total_real_chars:,}".replace(",", ".")
-            nb_summary = ", ".join([f"{c['title']} ({f'{c['chars']:,}'.replace(',', '.')})" for c in notebook_char_counts])
+            nb_summary = ", ".join([f"{c['title']} ({str(format(c['chars'], ',')).replace(',', '.')})" for c in notebook_char_counts])
             update_status(
                 vault_root=vault_root,
                 percent=40,
@@ -2611,6 +2647,35 @@ def extract_scientific_query_terms(discipline_name: str, topic: str, source_text
     return unique_queries[:3]
 
 
+EVIDENCE_ENGINE_DISCIPLINES = {"Bodybuilding"}
+
+
+def evidence_dossier_prompt_lines(auto_tool_results: Dict[str, Any], studies_only: bool = False) -> List[str]:
+    """Istruzioni per usare il dossier delle evidenze (evidence_search.py) al posto della semplice lista PubMed."""
+    dossier = auto_tool_results.get("evidence_dossier")
+    bundle = auto_tool_results.get("pubmed_evidence") or {}
+    if not dossier:
+        return []
+    lines = [
+        f"Il motore delle evidenze ha cercato gli studi sull'argomento (query: {', '.join(f'`{q}`' for q in bundle.get('queries_executed', []))}), "
+        f"ne ha analizzati **{bundle.get('analyzed', 0)} sul testo completo** ({bundle.get('usable', 0)} utilizzabili per conclusioni) "
+        "con ricalcolo dell'effect size per disegno, verifica di SEM/SD, spin e qualita', e ha creato le loro Note Studio in `Bodybuilding/Studi/`.",
+        f"- **Leggi per intero `file://{dossier}`** prima di scrivere: contiene la gerarchia degli studi gia' pesata, i risultati ricalcolati e i limiti.",
+        "- La **Tabella Obbligatoria degli Studi** si costruisce dal dossier, nello stesso ordine di peso, con queste colonne: "
+        "Studio (link alla Nota Studio, es. `[[citekey|Autore et al. Anno]]`, oppure il PMID per gli studi solo-abstract) | Disegno e Campione (N persone; arti se unilaterale) | "
+        "Popolazione | Misura | Sforzo | Risultato (effetto ricalcolato) | Peso / Utilizzabile.",
+        "- Applica la **Gerarchia delle Evidenze** e i **Divieti** del profilo disciplinare: un'evidenza di rango inferiore non smentisce una superiore; "
+        "gli studi non utilizzabili o letti solo nell'abstract non sostengono conclusioni ne' regole pratiche; ogni conclusione dichiara la sua forza (solida / moderata / provvisoria / insufficiente).",
+        "- Le regole pratiche del Blocco 6 devono indicare su quali studi del dossier si basano e per quale popolazione valgono.",
+        "- Non citare studi, numeri o PMID che non sono nel dossier.",
+    ]
+    if studies_only:
+        lines.insert(1, "- **Fonte unica di questa nota: gli studi del dossier.** Struttura la nota secondo i blocchi del profilo Bodybuilding; "
+                        "ogni affermazione empirica viene dal dossier. Anatomia e fisiologia di base possono essere spiegate solo se coerenti con il profilo e senza numeri non presenti nel dossier. "
+                        "Se il dossier non basta per una sezione, scrivilo esplicitamente come lacuna invece di riempirla.")
+    return lines + [""]
+
+
 def trigger_auto_tools_sequential(
     discipline_name: str,
     discipline_cfg: Dict[str, Any],
@@ -2619,6 +2684,8 @@ def trigger_auto_tools_sequential(
     allegati_dir: Path,
     context_dir: Path,
     tools_dir: Path,
+    progress: Optional[Any] = None,
+    force_evidence: bool = False,
 ) -> Dict[str, Any]:
     """
     Esegue gli strumenti scientifici in modo sequenziale intelligente:
@@ -2632,6 +2699,24 @@ def trigger_auto_tools_sequential(
         "science_media": None,
         "targeted_pubmed_queries": []
     }
+
+    # 0. Motore delle evidenze (Bodybuilding o fonte "Solo studi"): ricerca, selezione, analisi critica, dossier
+    if force_evidence or (discipline_name in EVIDENCE_ENGINE_DISCIPLINES and auto_tools.get("pubmed", False)):
+        try:
+            import evidence_search
+            bundle = evidence_search.build_dossier(topic, context_dir, context_text=source_text, progress=progress)
+            if bundle.get("articles"):
+                results["pubmed_evidence"] = bundle
+                results["targeted_pubmed_queries"] = bundle.get("queries_executed", [])
+                results["evidence_dossier"] = bundle.get("dossier_path")
+                sys.stderr.write(f"[Orchestrator] Evidenze: {bundle.get('analyzed')} studi analizzati, dossier {bundle.get('dossier_path')}\n")
+                auto_tools = {**auto_tools, "pubmed": False}
+            else:
+                sys.stderr.write("[Orchestrator] Evidenze: nessuno studio trovato, ripiego sulla ricerca PubMed semplice.\n")
+        except SystemExit:
+            sys.stderr.write("[Orchestrator] Evidenze: librerie mancanti, ripiego sulla ricerca PubMed semplice.\n")
+        except Exception as e:
+            sys.stderr.write(f"[Orchestrator] Evidenze non riuscite ({type(e).__name__}: {e}), ripiego sulla ricerca PubMed semplice.\n")
 
     # 1. PubMed Sequenziale Intelligente
     if auto_tools.get("pubmed", False):
@@ -2848,7 +2933,7 @@ def build_moc_operational_prompt(
                 "> 1. **Gerarchia Ferrea:** I moduli didattici, le notazioni e i percorsi del docente estratti comandano al 100%. In caso di contrasto di impostazione o sequenza, vince il NotebookLM.\n"
                 "> 2. **Ruolo della Conoscenza di Base nel MOC:**\n"
                 ">    - **Colmare buchi didattici d'esame:** Sei autorizzato a colmare eventuali buchi logici tra una lezione e l'altra del professore o omissioni dell'indice, garantendo che la sequenza propedeutica per preparare l'esame sia completa al 100%.\n"
-                ">    - **Propedeuticità e Raccordi:** Esplicita i ponti logici e i collegamenti propedeutici tra i moduli, inserendo i wikilink dedicati a tutti i concetti e metodi necessari.\n"
+                ">    - **Propedeuticità e Raccordi:** Esplicita i ponti logici e i collegamenti propedeutici tra i moduli, inserendo collegamenti solo tra concetti realmente correlati, anche verso altre materie solo se pertinenti.\n"
             )
         prompt_lines.append("")
         prompt_lines.append("### 1. Leggi con una Sola Chiamata le Istruzioni Compilate")
@@ -2857,7 +2942,7 @@ def build_moc_operational_prompt(
             "  Focalizzati tassativamente sulla **Legge 4 (Filosofia dei MOC)** e sulla **Legge 11 (Sintesi Multi-Fonte Cross-Notebook)**:\n"
             "  * Il MOC deve essere **sempre discorsivo e narrativo**, spiegando nel testo *perché* i concetti si collegano tra loro.\n"
             "  * Struttura gerarchica a 3 livelli: Macro-MOC, Sub-MOC, Note Atomiche.\n"
-            "  * **Legge 11 (Fusione Organica):** Non creare blocchi separati per ciascun notebook. Devi fondere organicamente i moduli, evidenziando correlazioni interdisciplinari e convergenze.\n"
+            "  * **Legge 11 (Fusione Organica):** Non creare blocchi separati per ciascun notebook. Devi fondere organicamente i moduli, creando collegamenti solo tra concetti realmente correlati, anche verso altre materie solo se pertinenti.\n"
             "  * Divieto assoluto di elenchi puntati sterili o asettici.\n"
         )
         prompt_lines.append("### 2. Estrai, Analizza e Fondi l'Architettura Concettuale da Tutti i NotebookLM")
@@ -2884,7 +2969,7 @@ def build_moc_operational_prompt(
                 "- **Nessun indice allegato:** il perimetro è l'intero notebook. Organizza i moduli seguendo l'indice generale estratto da NotebookLM (non l'elenco dei documenti).\n"
             )
         prompt_lines.append(
-            "- **Copertura:** dentro il perimetro, ogni concetto, teorema e metodo trattato dalle fonti ha il suo `[[wikilink]]`, immerso nella narrazione che collega i moduli.\n"
+            "- **Copertura:** dentro il perimetro, i concetti e i metodi trattati dalle fonti sono collegati solo quando esiste una relazione concettuale reale.\n"
         )
         prompt_lines.append("")
         prompt_lines.append("### 3. Incrocia la Mappa con l'Indice del Vault (`vault-index.json`)")
@@ -3209,7 +3294,10 @@ def build_edit_operational_prompt(
         prompt_lines.append("")
         prompt_lines.append("### 4. Integrazione Studi Scientifici PubMed e Aggiornamento [[Wikilink]]")
         pubmed_data = auto_tool_results.get("pubmed_evidence")
-        if pubmed_data and pubmed_data.get("articles"):
+        dossier_lines = evidence_dossier_prompt_lines(auto_tool_results)
+        if dossier_lines:
+            prompt_lines.extend(dossier_lines)
+        elif pubmed_data and pubmed_data.get("articles"):
             prompt_lines.append(
                 f"- Sono stati estratti **{len(pubmed_data['articles'])} paper PubMed reali** basati sulla nuova fonte e sul testo della nota.\n"
                 "  Consulta `.antigravity/job-context/pubmed_evidence.json` ed integra o aggiorna la tabella degli studi scientifici con i link PMID."
@@ -3260,7 +3348,10 @@ def build_edit_operational_prompt(
         prompt_lines.append("")
         prompt_lines.append("### 3. Aggiorna la Sezione Evidenze Scientifiche e Media")
         pubmed_data = auto_tool_results.get("pubmed_evidence")
-        if pubmed_data and pubmed_data.get("articles"):
+        dossier_lines = evidence_dossier_prompt_lines(auto_tool_results)
+        if dossier_lines:
+            prompt_lines.extend(dossier_lines)
+        elif pubmed_data and pubmed_data.get("articles"):
             prompt_lines.append(
                 f"- Il motore PubMed ha estratto **{len(pubmed_data['articles'])} paper scientifici reali** basandosi sui termini della nota.\n"
                 "  Consulta `.antigravity/job-context/pubmed_evidence.json` ed inserisci o aggiorna la tabella dedicata agli studi scientifici:\n"
@@ -3560,7 +3651,11 @@ def build_operational_prompt(
 
     prompt_lines.append("### 3. Evidenze PubMed Estratte Sequenzialmente")
     pubmed_data = auto_tool_results.get("pubmed_evidence")
-    if pubmed_data and pubmed_data.get("articles"):
+    dossier_lines = evidence_dossier_prompt_lines(
+        auto_tool_results, studies_only=(source_results.get("source_type") == "studies"))
+    if dossier_lines:
+        prompt_lines.extend(dossier_lines)
+    elif pubmed_data and pubmed_data.get("articles"):
         queries_used = ", ".join([f"`{q}`" for q in pubmed_data.get("queries_executed", [])])
         prompt_lines.append(f"Il motore PubMed intelligente ha interrogato la letteratura con query estratte dal testo ({queries_used}) trovando **{len(pubmed_data['articles'])} paper reali**.")
         prompt_lines.append("Consulta `.antigravity/job-context/pubmed_evidence.json` ed inserisci nella nota la tabella con i link PMID e le metodiche d'indagine.")
@@ -4192,6 +4287,23 @@ def write_moc_notebooks_frontmatter(moc_path: Path, notebooks: List[Dict[str, st
     return True
 
 
+def add_lessons_frontmatter(text: str, dates: List[str]) -> str:
+    """Aggiunge le date delle lezioni (tutor) alla proprietà lista "Lezioni" del frontmatter, senza duplicati."""
+    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        return "---\nLezioni:\n" + "".join(f"  - {d}\n" for d in sorted(set(dates))) + "---\n" + text
+    fm = m.group(1)
+    block = re.search(r"(?m)^Lezioni:[ \t]*\n((?:[ \t]+-.*\n?)*)", fm + "\n")
+    existing = re.findall(r"-\s*(\S+)", block.group(1)) if block else []
+    values = "".join(f"  - {d}\n" for d in sorted(set(existing) | set(dates)))
+    if block:
+        fm = (fm + "\n")[:block.start()] + "Lezioni:\n" + values + (fm + "\n")[block.end():]
+        fm = fm.rstrip("\n")
+    else:
+        fm = fm + "\nLezioni:\n" + values.rstrip("\n")
+    return "---\n" + fm + "\n---\n" + text[m.end():]
+
+
 def post_process_job(vault_root: Path, job_file: Path) -> int:
     """Eseguito da run_job.sh dopo che l'agente ha finito di scrivere: metadati MOC + verifica di esclusività."""
     try:
@@ -4244,6 +4356,31 @@ def post_process_job(vault_root: Path, job_file: Path) -> int:
         job_file.write_text(json.dumps(job_data, indent=2, ensure_ascii=False), encoding="utf-8")
         sys.stdout.write(f"[PostProcess] {summary}\n")
 
+    # Tutor delle lezioni: la nota ricorda in quali lezioni è stata trattata
+    if job_data.get("lessons") and op_type in ("normal", "edit") and (vault_root / target_rel).exists():
+        note_path = vault_root / target_rel
+        note_path.write_text(add_lessons_frontmatter(note_path.read_text(encoding="utf-8"), job_data["lessons"]), encoding="utf-8")
+
+    # Verifica di correttezza con un secondo modello (via agy): spenta di default, costa troppa quota (minuti e
+    # due chiamate per nota). Resta nel menu per una nota alla volta; ANTIGRAVITY_VERIFY_AUTO=1 la riaccende qui.
+    if os.environ.get("ANTIGRAVITY_VERIFY_AUTO") == "1" and op_type in ("normal", "edit") and (vault_root / target_rel).exists():
+        update_status(
+            vault_root=vault_root, percent=98, step_number=6, total_steps=6,
+            message="🔎 Verifica e correzione (secondo modello via agy)...",
+            detail="Un secondo modello controlla definizioni, enunciati, dimostrazioni e calcoli e corregge gli errori certi",
+            status="running", target_file=target_rel, phase="verify",
+        )
+        try:
+            import correctness_check
+            note = correctness_check.summary(correctness_check.check_note(vault_root / target_rel, fix=True))
+        except Exception as e:
+            sys.stderr.write(f"[PostProcess] Verifica di correttezza non riuscita: {e}\n")
+            note = f"⚠️ Verifica di correttezza non completata: {e}"
+        if note:
+            job_data["grounding_summary"] = (job_data.get("grounding_summary", "") + " · " + note).strip(" ·")
+            job_file.write_text(json.dumps(job_data, indent=2, ensure_ascii=False), encoding="utf-8")
+            sys.stdout.write(f"[PostProcess] {note}\n")
+
     # Sezioni richieste dai MOC con [[Nota#Sezione]]: se mancano, il link del MOC non porta da nessuna parte
     if op_type in ("normal", "edit"):
         try:
@@ -4286,6 +4423,77 @@ def post_process_job(vault_root: Path, job_file: Path) -> int:
         sys.stderr.write(f"[PostProcess] Layout non aggiornato: {e}\n")
     return 0
 
+
+def _ascii_slug(name: str) -> str:
+    import unicodedata
+    value = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii").lower()
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", value)).strip("-") or "disciplina"
+
+def create_discipline_scaffold(vault_root: Path, name: str, pole: str, emoji: str) -> dict:
+    name = re.sub(r'[\\/:*?"<>|]', "", str(name))
+    name = re.sub(r"\s+", " ", name).strip().lstrip(".")[:60].strip()
+    if not name:
+        raise ValueError("Nome materia vuoto dopo la sanificazione")
+    pole = pole if pole in {"università", "personale"} else "personale"
+    entries = load_disciplines(vault_root)
+    slug = _ascii_slug(name)
+    normalized = name.casefold()
+    existing = next((e for e in entries if str(e.get("name", "")).casefold() == normalized or e.get("slug") == slug), None)
+    if existing:
+        return existing
+    entry = {"name": name, "slug": slug, "pole": pole, "emoji": emoji or "📚", "aliases": []}
+    profile_dir = vault_root / ".antigravity" / "disciplines"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    profile = profile_dir / f"{slug}.md"
+    if not profile.exists():
+        profile.write_text(f"# {name}\n\n## Scopo\nOrganizzare e approfondire i concetti essenziali di {name}.\n\n## Struttura delle note\nLe note sviluppano un Concetto e il relativo Metodo quando utile.\n", encoding="utf-8")
+    moc_dir = vault_root / "01 MOC's"
+    moc_dir.mkdir(parents=True, exist_ok=True)
+    moc = moc_dir / f"{name} MOC.md"
+    if not moc.exists():
+        moc.write_text(f"---\nDisciplina: {name}\nType: [MOC]\n---\n\n# {name} MOC\n\nMappa dei concetti e dei percorsi di studio di {name}.\n", encoding="utf-8")
+    folder = vault_root / name
+    folder.mkdir(parents=True, exist_ok=True)
+    register_discipline(vault_root, entry)
+    DISCIPLINE_SLUG_MAP[name] = slug
+    DISCIPLINE_DIR_ALIASES[name] = []
+    return entry
+
+def resolve_auto_discipline(vault_root: Path, job_data: dict) -> dict:
+    entries = load_disciplines(vault_root)
+    topic = str(job_data.get("topic") or job_data.get("title") or "")
+    notebooks = extract_notebooks_list(job_data.get("source", {}), job_data)
+    files = []
+    def collect(value):
+        if isinstance(value, str) and ("/" in value or value.lower().endswith((".pdf", ".md", ".txt"))): files.append(Path(value).name)
+        elif isinstance(value, dict):
+            for k,v in value.items():
+                if k in {"value", "path", "files", "file", "sources"}: collect(v)
+        elif isinstance(value, list):
+            for v in value: collect(v)
+    collect(job_data.get("source", {})); collect(job_data.get("syllabus_files", []))
+    schema = {"type":"object","properties":{"match":{"type":["string","null"]},"new_name":{"type":["string","null"]},"pole":{"type":"string","enum":["università","personale"]},"emoji":{"type":"string"},"confidence":{"type":"number"}},"required":["match","new_name","pole","emoji","confidence"],"additionalProperties":False}
+    prompt = ("Classifica l'argomento per un vault personale. Scegli una materia esistente SOLO se l'argomento le appartiene davvero; altrimenti proponi un nome nuovo, breve, in italiano, Title Case. "
+        f"Argomento: {topic}\nTitoli NotebookLM: {[n.get('title') for n in notebooks]}\nFile fonti locali: {files}\nMaterie: {[e['name'] for e in entries]}\n"
+        "Restituisci match valorizzato solo se esattamente uno dei nomi elencati; in caso contrario new_name.")
+    result = run_agy_structured(prompt, schema, timeout_sec=180, effort="low")
+    entry = None
+    if result:
+        match = result.get("match")
+        normalize_match = lambda value: " ".join(str(value or "").split()).casefold()
+        entry = next((e for e in entries if normalize_match(e["name"]) == normalize_match(match)), None)
+        if not entry and result.get("new_name"):
+            name = str(result["new_name"]).strip()
+            if name: entry = create_discipline_scaffold(vault_root, name, result.get("pole", "personale"), result.get("emoji", "📚"))
+    if not entry:
+        haystack = (topic + " " + " ".join(files) + " " + " ".join(n.get("title", "") for n in notebooks)).lower()
+        entry = next((e for e in entries if any(x.lower() in haystack for x in [e["name"], *e.get("aliases", [])] if x)), None)
+    if not entry:
+        raise RuntimeError("Impossibile rilevare o creare la materia: classificatore non disponibile e nessun nome/alias del registro compare nell'argomento.")
+    name = entry["name"]
+    for key in ("discipline", "disciplina"): job_data[key] = name
+    job_data["pole"] = entry.get("pole", "personale")
+    return entry
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -4460,6 +4668,23 @@ def main() -> int:
         return 1
 
     discipline_name = job_data.get("discipline", "")
+    if discipline_name == "__auto__":
+        try:
+            chosen = resolve_auto_discipline(vault_root, job_data)
+            discipline_name = chosen["name"]
+            def replace_auto(value):
+                if isinstance(value, str): return value.replace("__auto__", discipline_name) if value.startswith("__auto__/") or "/__auto__/" in value else value
+                if isinstance(value, list): return [replace_auto(v) for v in value]
+                if isinstance(value, dict): return {k: replace_auto(v) for k, v in value.items()}
+                return value
+            job_data = replace_auto(job_data)
+            job_file.write_text(json.dumps(job_data, indent=2, ensure_ascii=False), encoding="utf-8")
+            update_status(vault_root=vault_root, percent=0, step_number=0, total_steps=6, message=f"Materia rilevata: {discipline_name}", detail=f"Polo: {chosen.get('pole')}", status="running")
+        except Exception as e:
+            msg = f"Risoluzione automatica della materia non riuscita: {e}"
+            update_status(vault_root=vault_root, percent=0, step_number=0, total_steps=6, message="Materia automatica non risolta", detail=msg, status="error", error=msg)
+            sys.stderr.write(msg + "\n")
+            return 1
     op_type = job_data.get("operation_type") or job_data.get("operation", "normal")
     topic_str = job_data.get("topic", "Senza Titolo")
 
@@ -4615,17 +4840,37 @@ def main() -> int:
         if op_type == "edit" and job_data.get("edit_mode") in ["surgical_prompt", "reformat_standard"]:
             should_run_auto_tools = False
 
-        if should_run_auto_tools:
+        studies_only = source_info.get("type") == "studies"
+
+        def evidence_progress(msg: str, done: int, total: int) -> None:
+            update_status(
+                vault_root=vault_root, percent=45, step_number=3, total_steps=6,
+                message=f"🔬 {msg}", detail=f"{done} di {total}" if total > 1 else "Motore delle evidenze",
+                status="running", target_file=target_rel, phase="sources",
+                progress={"done": done, "total": total, "unit": "studi"} if total > 1 else None,
+            )
+
+        if should_run_auto_tools or studies_only:
             print(f"🔬 Esecuzione PubMed e Tool Scientifici sequenziali per '{discipline_name}'...")
             auto_tool_results = trigger_auto_tools_sequential(
                 discipline_name=discipline_name,
                 discipline_cfg=discipline_cfg,
                 topic=topic_str,
-                source_text=source_results.get("raw_source_text", ""),
+                source_text=source_results.get("raw_source_text", "") if not studies_only else "",
                 allegati_dir=allegati_dir,
                 context_dir=context_dir,
                 tools_dir=tools_dir,
+                progress=evidence_progress,
+                force_evidence=studies_only,
             )
+
+        if studies_only:
+            dossier_path = auto_tool_results.get("evidence_dossier")
+            if not dossier_path or not Path(dossier_path).exists():
+                raise RuntimeError(f"Nessuno studio scientifico trovato su '{topic_str}': prova a riformulare l'argomento")
+            source_results["content_markdown"] = Path(dossier_path).read_text(encoding="utf-8")
+            source_results["raw_source_text"] = source_results["content_markdown"]
+            (context_dir / "source_content.md").write_text(source_results["content_markdown"], encoding="utf-8")
 
         pubmed_studies_count = len(auto_tool_results.get("pubmed_evidence", {}).get("articles", []) if auto_tool_results.get("pubmed_evidence") else [])
 

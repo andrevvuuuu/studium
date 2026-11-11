@@ -36,7 +36,11 @@ function getRuntimeDir() {
 
 // Helper: Configurazione del PATH completo di macOS per ereditare i binari del sistema
 function getMacOSPathEnv() {
+    // .antigravity/bin/python3 sceglie un interprete con le librerie di Studium (Homebrew ne ha uno senza)
+    let studiumBin = null;
+    try { studiumBin = path.join(window.app.vault.adapter.basePath, ".antigravity", "bin"); } catch (_) {}
     const customBinPaths = [
+        ...(studiumBin ? [studiumBin] : []),
         path.join(require("os").homedir(), ".local/bin"),
         "/opt/homebrew/bin",
         "/opt/homebrew/sbin",
@@ -185,6 +189,11 @@ async function getNotebookLMList(vaultBasePath) {
             });
         });
     });
+}
+
+function getNotebookLMListFast(vaultBasePath) {
+    const cached = getLocalNotebooksCache(vaultBasePath);
+    return { cached: Array.isArray(cached) ? cached : [], fresh: getNotebookLMList(vaultBasePath) };
 }
 
 // Helper ASINCRONO: Selettore file multiplo nativo macOS con AppleScript non bloccante
@@ -645,7 +654,7 @@ const HUD_PHASES = [
     { key: "sources", label: "Lettura delle fonti", weight: 90 },
     { key: "context", label: "Collegamenti e istruzioni", weight: 15 },
     { key: "writing", label: "Scrittura", weight: 300 },
-    { key: "verify", label: "Verifica esclusività", weight: 380 },
+    { key: "verify", label: "Verifica (fonti)", weight: 380 },
     { key: "final", label: "Rifinitura", weight: 10 },
 ];
 const HUD_PHASE_ORDER = HUD_PHASES.map(p => p.key);
@@ -708,128 +717,7 @@ function scheduleHudExit(el, delay, onGone) {
 }
 
 function injectHudStyle() {
-    if (document.getElementById("antigravity-hud-style")) return;
-    const styleEl = document.createElement("style");
-    styleEl.id = "antigravity-hud-style";
-    styleEl.textContent = `
-        .ag-hud {
-            --ag-surface: color-mix(in srgb, var(--background-primary) 80%, transparent);
-            --ag-track: color-mix(in srgb, var(--text-normal) 9%, transparent);
-            --ag-done: var(--color-green, #34c759);
-            --ag-active: var(--interactive-accent);
-            --ag-danger: var(--color-red, #ff3b30);
-            position: fixed;
-            /* In basso a sinistra, oltre la ribbon delle icone (impostazioni, vault) */
-            left: calc(var(--ribbon-width, 44px) + 12px);
-            bottom: 16px;
-            z-index: var(--layer-notice, 9999);
-            width: 372px;
-            max-width: calc(100vw - 32px);
-            box-sizing: border-box;
-            padding: 14px 16px 12px;
-            border-radius: 14px;
-            border: 1px solid var(--background-modifier-border);
-            background: var(--ag-surface);
-            -webkit-backdrop-filter: blur(28px) saturate(1.7);
-            backdrop-filter: blur(28px) saturate(1.7);
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 12px 32px -8px rgba(0, 0, 0, 0.38);
-            color: var(--text-normal);
-            font-family: var(--font-interface);
-            font-size: 13px;
-            line-height: 1.4;
-            font-variant-numeric: tabular-nums;
-            -webkit-user-select: none;
-            user-select: none;
-            transition: opacity 0.32s cubic-bezier(0.16, 1, 0.3, 1), transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
-            animation: ag-hud-in 0.42s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-        @keyframes ag-hud-in { from { opacity: 0; transform: translateY(12px) scale(0.98); } }
-        .ag-hud-detail, .ag-hud-title { -webkit-user-select: text; user-select: text; }
-        .ag-hud-overall { height: 4px; margin: 10px 0 2px; border-radius: 999px; background: var(--ag-track); overflow: hidden; }
-        .ag-hud-overall > i { display: block; height: 100%; width: 0; background: var(--ag-done); border-radius: inherit; transition: width 0.5s ease; }
-        .ag-hud-note { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--background-modifier-border); }
-        .ag-hud-note .ag-hud-title { font-size: 13px; }
-        .ag-hud-note .ag-hud-bar { margin-top: 8px; }
-        .ag-hud-head { display: flex; align-items: flex-start; gap: 10px; }
-        .ag-hud-heading { flex: 1; min-width: 0; }
-        .ag-hud-title {
-            font-size: 14px;
-            font-weight: 600;
-            letter-spacing: -0.01em;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .ag-hud-sub { margin-top: 2px; color: var(--text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .ag-hud-clock { color: var(--text-muted); font-size: 12px; padding-top: 2px; }
-        .ag-hud-x {
-            all: unset;
-            width: 22px;
-            height: 22px;
-            margin: -2px -4px 0 0;
-            border-radius: 6px;
-            display: grid;
-            place-items: center;
-            color: var(--text-faint);
-            cursor: pointer;
-        }
-        .ag-hud-x svg { width: 14px; height: 14px; }
-        .ag-hud-x:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
-        .ag-hud-x:focus-visible, .ag-hud-btn:focus-visible { outline: 2px solid var(--ag-active); outline-offset: 2px; }
-        .ag-hud-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
-        .ag-hud-chip {
-            font-size: 11px;
-            padding: 1px 8px;
-            border-radius: 999px;
-            background: var(--ag-track);
-            color: var(--text-muted);
-            max-width: 100%;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .ag-hud-bar { display: flex; gap: 3px; height: 6px; margin: 12px 0 8px; }
-        .ag-hud-seg { position: relative; min-width: 6px; border-radius: 999px; background: var(--ag-track); overflow: hidden; }
-        .ag-hud-seg > i { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: inherit; background: var(--ag-active); transition: width 0.5s ease; }
-        .ag-hud-seg.is-done > i { width: 100%; background: var(--ag-done); }
-        .ag-hud-seg.is-idle > i {
-            width: 100%;
-            background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ag-active) 55%, transparent), transparent);
-            animation: ag-hud-sweep 1.6s ease-in-out infinite;
-        }
-        @keyframes ag-hud-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
-        .ag-hud-now { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
-        .ag-hud-now b { font-weight: 600; font-size: 13px; }
-        .ag-hud-pct { color: var(--text-muted); font-size: 12px; }
-        .ag-hud-detail { color: var(--text-muted); font-size: 12px; margin-top: 1px; min-height: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .ag-hud-steps { list-style: none; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid var(--background-modifier-border); }
-        .ag-hud-steps li { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12px; color: var(--text-faint); }
-        .ag-hud-steps li > span:nth-child(2) { flex: 1; }
-        .ag-hud-steps li > span:last-child { color: var(--text-faint); }
-        .ag-hud-steps .ag-hud-mark { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid currentColor; box-sizing: border-box; flex: none; }
-        .ag-hud-steps li.is-done { color: var(--text-muted); }
-        .ag-hud-steps li.is-done .ag-hud-mark { background: var(--ag-done); border-color: var(--ag-done); }
-        .ag-hud-steps li.is-active { color: var(--text-normal); font-weight: 500; }
-        .ag-hud-steps li.is-active .ag-hud-mark { background: var(--ag-active); border-color: var(--ag-active); }
-        .ag-hud-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
-        .ag-hud-actions .ag-hud-spacer { flex: 1; }
-        .ag-hud-btn { font-size: 12px; padding: 3px 10px; height: auto; border-radius: 7px; }
-        .ag-hud .ag-hud-btn.is-destructive { background: transparent; box-shadow: none; border: 0; color: var(--ag-danger); font-weight: 500; }
-        .ag-hud .ag-hud-btn.is-destructive:hover { background: color-mix(in srgb, var(--ag-danger) 12%, transparent); }
-        .ag-hud .ag-hud-btn:disabled { opacity: 0.55; cursor: default; }
-        .ag-hud-stats { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--text-muted); }
-        .ag-hud-stats strong { color: var(--text-normal); font-weight: 600; }
-        .ag-hud.is-completed .ag-hud-seg > i { width: 100% !important; background: var(--ag-done); animation: none; transition: none; }
-        .ag-hud.is-error .ag-hud-seg.is-active > i, .ag-hud.is-error .ag-hud-seg.is-idle > i { width: 100%; background: var(--ag-danger); animation: none; }
-        .ag-hud.is-error .ag-hud-now b { color: var(--ag-danger); }
-        .ag-hud.is-cancelled .ag-hud-seg > i { animation: none; opacity: 0.4; }
-        .ag-hud.is-leaving { opacity: 0; transform: translateY(12px) scale(0.98); pointer-events: none; }
-        @media (prefers-reduced-motion: reduce) {
-            .ag-hud, .ag-hud * { animation: none !important; transition: none !important; }
-            .ag-hud-seg.is-idle > i { background: color-mix(in srgb, var(--ag-active) 40%, transparent); }
-        }
-    `;
-    document.head.appendChild(styleEl);
+    require(path.join(window.app.vault.adapter.basePath, "Scripts", "ag_style.js"))();
 }
 
 // Barra segmentata: una porzione per fase, larga quanto la sua durata tipica
@@ -978,8 +866,13 @@ function renderProgressHud(app, vaultBasePath, targetFilePath, topicTitle, child
             <button class="ag-hud-btn ag-hud-cancel is-destructive">Annulla</button>
         </div>`;
     const q = sel => hudEl.querySelector(sel);
-    q(".ag-hud-title").textContent = noteTitle;
     const setSubtitle = rel => {
+        if (rel && rel.startsWith("__auto__/")) {
+            q(".ag-hud-title").textContent = "✨ Materia in rilevamento…";
+            q(".ag-hud-sub").textContent = noteTitle;
+            return;
+        }
+        q(".ag-hud-title").textContent = noteTitle;
         // Mostra solo corso e modulo (le ultime due cartelle), non l'intero percorso
         const dirs = rel ? path.dirname(rel).split("/").filter(d => d && d !== ".") : [];
         q(".ag-hud-sub").textContent = dirs.length ? `${opLabel} in ${dirs.slice(-2).join(" › ")}` : opLabel;
@@ -1250,10 +1143,981 @@ function launchBackgroundJob(app, vaultBasePath, jobData) {
     renderProgressHud(app, vaultBasePath, jobData.target_file_path, jobData.topic || jobData.title || "Nota Antigravity", childPid, jobData);
 }
 
-// Helper: Selettore interattivo unificato per fonti esterne
-async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Passo 4/8: Seleziona la Fonte:") {
+function ensureAgStyle(vaultBasePath) {
+    try {
+        const bp = vaultBasePath || (window.app && window.app.vault && window.app.vault.adapter && window.app.vault.adapter.basePath);
+        if (bp) {
+            require(path.join(bp, "Scripts", "ag_style.js"))();
+        } else if (typeof injectHudStyle === "function") {
+            injectHudStyle();
+        }
+    } catch (_) {}
+}
+
+function openDisciplinePickerModal(app, options) {
+    const opts = options || {};
+    const title = opts.title || "Seleziona la Disciplina";
+    const disciplines = Array.isArray(opts.disciplines) ? opts.disciplines : [];
+    const current = opts.current || null;
+
+    ensureAgStyle();
+
+    return new Promise((resolve) => {
+        let submitted = false;
+
+        const modalContainer = document.createElement("div");
+        modalContainer.className = "modal-container mod-dim ag-picker-backdrop";
+
+        const modalBg = document.createElement("div");
+        modalBg.className = "modal-bg";
+        modalContainer.appendChild(modalBg);
+
+        const modalEl = document.createElement("div");
+        modalEl.className = "modal ag-picker ag-picker-discipline";
+        modalEl.setAttribute("role", "dialog");
+        modalEl.setAttribute("aria-modal", "true");
+        modalEl.setAttribute("aria-labelledby", "ag-discipline-title");
+        modalContainer.appendChild(modalEl);
+
+        // Header
+        const headerEl = document.createElement("div");
+        headerEl.className = "ag-picker-header";
+        headerEl.innerHTML = `
+            <div class="ag-picker-title-row">
+                <h2 id="ag-discipline-title" class="ag-picker-title">${escapeHtml(title)}</h2>
+            </div>
+            <p class="ag-picker-subtitle">Seleziona la materia o lascia che Antigravity la rilevi automaticamente</p>
+            <button type="button" class="ag-picker-close-btn" aria-label="Chiudi" title="Chiudi">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+        `;
+        modalEl.appendChild(headerEl);
+
+        // Card in evidenza: Rileva o crea automaticamente
+        const autoCard = document.createElement("div");
+        autoCard.className = "ag-picker-card ag-picker-card-featured";
+        autoCard.setAttribute("tabindex", "0");
+        autoCard.setAttribute("role", "button");
+        autoCard.setAttribute("aria-label", "Rileva o crea la materia automaticamente");
+        autoCard.innerHTML = `
+            <div class="ag-picker-card-icon" aria-hidden="true">✨</div>
+            <div class="ag-picker-card-content">
+                <div class="ag-picker-card-name">✨ Rileva o crea automaticamente</div>
+                <div class="ag-picker-card-desc">Analizza le fonti: usa una materia esistente o ne crea una nuova (cartella, profilo, MOC)</div>
+            </div>
+        `;
+        modalEl.appendChild(autoCard);
+
+        // Campo di ricerca
+        const searchWrap = document.createElement("div");
+        searchWrap.className = "ag-picker-search-wrap";
+        searchWrap.innerHTML = `<input type="search" class="ag-picker-input ag-picker-search" placeholder="Cerca materia..." aria-label="Cerca materia">`;
+        modalEl.appendChild(searchWrap);
+        const searchInput = searchWrap.querySelector("input");
+
+        // Contenitore gruppi
+        const groupsContainer = document.createElement("div");
+        groupsContainer.className = "ag-picker-groups-container";
+        groupsContainer.setAttribute("role", "region");
+        groupsContainer.setAttribute("aria-label", "Materie disponibili");
+        modalEl.appendChild(groupsContainer);
+        groupsContainer.className = "ag-picker-groups-container";
+        modalEl.appendChild(groupsContainer);
+
+        const uniGroupEl = document.createElement("div");
+        uniGroupEl.className = "ag-picker-group";
+        uniGroupEl.innerHTML = `
+            <div class="ag-picker-section-label">Università</div>
+            <div class="ag-picker-chips-grid ag-picker-uni-chips"></div>
+        `;
+
+        const persGroupEl = document.createElement("div");
+        persGroupEl.className = "ag-picker-group";
+        persGroupEl.innerHTML = `
+            <div class="ag-picker-section-label">Personale</div>
+            <div class="ag-picker-chips-grid ag-picker-pers-chips"></div>
+        `;
+
+        const noResultsEl = document.createElement("div");
+        noResultsEl.className = "ag-picker-empty-state";
+        noResultsEl.textContent = "Nessuna materia corrispondente alla ricerca";
+        noResultsEl.style.display = "none";
+
+        groupsContainer.appendChild(uniGroupEl);
+        groupsContainer.appendChild(persGroupEl);
+        groupsContainer.appendChild(noResultsEl);
+
+        const uniChipsEl = uniGroupEl.querySelector(".ag-picker-uni-chips");
+        const persChipsEl = persGroupEl.querySelector(".ag-picker-pers-chips");
+
+        const chipElements = [];
+
+        const cleanup = () => {
+            document.removeEventListener("keydown", handleKeydown, true);
+            if (modalContainer.parentNode) {
+                modalContainer.parentNode.removeChild(modalContainer);
+            }
+        };
+
+        const selectItem = (disc) => {
+            submitted = true;
+            cleanup();
+            resolve(disc);
+        };
+
+        const createChip = (disc, parent) => {
+            const chip = document.createElement("div");
+            chip.className = "ag-picker-chip";
+            chip.setAttribute("tabindex", "0");
+            chip.setAttribute("role", "button");
+            const isCur = current && (current === disc.name || (current.name && current.name === disc.name));
+            if (isCur) {
+                chip.classList.add("is-selected");
+                chip.setAttribute("aria-pressed", "true");
+            } else {
+                chip.setAttribute("aria-pressed", "false");
+            }
+            chip.innerHTML = `
+                <span class="ag-picker-chip-emoji">${disc.emoji || "📚"}</span>
+                <span class="ag-picker-chip-name">${escapeHtml(disc.name)}</span>
+            `;
+            chip.onclick = () => selectItem(disc);
+            chip.onkeydown = (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectItem(disc);
+                }
+            };
+            parent.appendChild(chip);
+            chipElements.push({ el: chip, disc });
+        };
+
+        const uniList = disciplines.filter(d => (d.pole || "").toLowerCase().startsWith("universit"));
+        const persList = disciplines.filter(d => !(d.pole || "").toLowerCase().startsWith("universit"));
+
+        uniList.forEach(d => createChip(d, uniChipsEl));
+        persList.forEach(d => createChip(d, persChipsEl));
+
+        if (!uniList.length) uniGroupEl.style.display = "none";
+        if (!persList.length) persGroupEl.style.display = "none";
+
+        const filterItems = (query) => {
+            const q = query.trim().toLowerCase();
+            let visibleUni = 0;
+            let visiblePers = 0;
+
+            for (const item of chipElements) {
+                const match = !q || item.disc.name.toLowerCase().includes(q) || (item.disc.pole || "").toLowerCase().includes(q);
+                item.el.style.display = match ? "inline-flex" : "none";
+                if (match) {
+                    if ((item.disc.pole || "").toLowerCase().startsWith("universit")) visibleUni++;
+                    else visiblePers++;
+                }
+            }
+
+            uniGroupEl.style.display = visibleUni > 0 ? "" : "none";
+            persGroupEl.style.display = visiblePers > 0 ? "" : "none";
+
+            const autoMatch = !q || "rileva o crea automaticamente auto".includes(q);
+            autoCard.style.display = autoMatch ? "flex" : "none";
+
+            noResultsEl.style.display = (visibleUni === 0 && visiblePers === 0 && !autoMatch) ? "block" : "none";
+        };
+
+        searchInput.addEventListener("input", (e) => filterItems(e.target.value));
+
+        const autoObj = { name: "__auto__", pole: "", label: "✨ Rileva o crea la materia automaticamente" };
+        autoCard.onclick = () => selectItem(autoObj);
+        autoCard.onkeydown = (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                selectItem(autoObj);
+            }
+        };
+
+        const getNavigableList = () => {
+            const list = [];
+            if (autoCard.style.display !== "none") list.push(autoCard);
+            for (const item of chipElements) {
+                if (item.el.style.display !== "none") list.push(item.el);
+            }
+            return list;
+        };
+
+        const handleKeydown = (e) => {
+            if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                cleanup();
+                if (!submitted) resolve(null);
+                return;
+            }
+
+            if (e.key === "Enter") {
+                if (document.activeElement === searchInput) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const q = searchInput.value.trim().toLowerCase();
+                    const firstChip = chipElements.find(c => c.el.style.display !== "none");
+                    if (q && firstChip) {
+                        selectItem(firstChip.disc);
+                    } else if (autoCard.style.display !== "none") {
+                        selectItem(autoObj);
+                    } else if (firstChip) {
+                        selectItem(firstChip.disc);
+                    }
+                }
+            } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+                const nav = getNavigableList();
+                if (document.activeElement === searchInput) {
+                    if (nav.length) {
+                        e.preventDefault();
+                        nav[0].focus();
+                    }
+                } else {
+                    const idx = nav.indexOf(document.activeElement);
+                    if (idx >= 0 && idx < nav.length - 1) {
+                        e.preventDefault();
+                        nav[idx + 1].focus();
+                    }
+                }
+            } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+                const nav = getNavigableList();
+                const idx = nav.indexOf(document.activeElement);
+                if (idx > 0) {
+                    e.preventDefault();
+                    nav[idx - 1].focus();
+                } else if (idx === 0) {
+                    e.preventDefault();
+                    searchInput.focus();
+                }
+            }
+        };
+
+        headerEl.querySelector(".ag-picker-close-btn").onclick = () => {
+            cleanup();
+            if (!submitted) resolve(null);
+        };
+
+        modalBg.onclick = () => {
+            cleanup();
+            if (!submitted) resolve(null);
+        };
+
+        document.addEventListener("keydown", handleKeydown, true);
+        document.body.appendChild(modalContainer);
+        setTimeout(() => searchInput.focus(), 60);
+    });
+}
+
+function openSourcePickerModal(app, options) {
+    const opts = options || {};
+    const title = opts.title || "Seleziona la Fonte";
+    const step = opts.step || "";
+    const vaultBasePath = opts.vaultBasePath || (app && app.vault && app.vault.adapter && app.vault.adapter.basePath) || "";
+
+    let discName = "";
+    if (opts.discipline) {
+        discName = (typeof opts.discipline === "object" && opts.discipline !== null) ? (opts.discipline.name || "") : String(opts.discipline);
+    }
+    const withStudies = discName === "Bodybuilding";
+
+    const defaultTypes = [
+        "notebooklm",
+        "youtube",
+        "web",
+        "local_files",
+        ...(withStudies ? ["studies"] : [])
+    ];
+    const allowedTypes = Array.isArray(opts.allowedTypes) && opts.allowedTypes.length ? opts.allowedTypes : defaultTypes;
+    let activeType = allowedTypes[0] || "notebooklm";
+
+    ensureAgStyle(vaultBasePath);
+
+    return new Promise((resolve) => {
+        let submitted = false;
+
+        const validNotebooks = Array.isArray(opts.notebooks) ? [...opts.notebooks.filter(nb => nb && nb.id)] : [];
+        let selectedNotebooks = [];
+        let notebookSearchQuery = "";
+        let youtubeUrl = "";
+        let webUrl = "";
+        let pickedFiles = [];
+        let allowBaseKnowledge = opts.preselectedKnowledge === true ? true : false;
+        const hideKnowledgeSection = (opts.preselectedKnowledge === false);
+
+        const modalContainer = document.createElement("div");
+        modalContainer.className = "modal-container mod-dim ag-picker-backdrop";
+
+        const modalBg = document.createElement("div");
+        modalBg.className = "modal-bg";
+        modalContainer.appendChild(modalBg);
+
+        const modalEl = document.createElement("div");
+        modalEl.className = "modal ag-picker";
+        modalEl.setAttribute("role", "dialog");
+        modalEl.setAttribute("aria-modal", "true");
+        modalEl.setAttribute("aria-labelledby", "ag-source-title");
+        modalContainer.appendChild(modalEl);
+
+        // 1. Header
+        const headerEl = document.createElement("div");
+        headerEl.className = "ag-picker-header";
+
+        let subText = "";
+        if (discName === "__auto__") {
+            subText = "✨ Materia automatica";
+        } else if (discName) {
+            subText = `Materia: ${discName}`;
+        }
+
+        headerEl.innerHTML = `
+            <div class="ag-picker-title-row">
+                <h2 id="ag-source-title" class="ag-picker-title">${escapeHtml(title)}</h2>
+                ${step ? `<span class="ag-picker-step-chip">${escapeHtml(step)}</span>` : ""}
+            </div>
+            ${subText ? `<p class="ag-picker-subtitle">${escapeHtml(subText)}</p>` : ""}
+            <button type="button" class="ag-picker-close-btn" aria-label="Chiudi" title="Chiudi">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+        `;
+        modalEl.appendChild(headerEl);
+
+        // 2. Sezione 1: Tipo di fonte
+        const section1El = document.createElement("div");
+        section1El.className = "ag-picker-section ag-picker-section-types";
+        section1El.innerHTML = `
+            <div class="ag-picker-section-label">Tipo di fonte</div>
+            <div class="ag-picker-grid" role="radiogroup" aria-label="Tipo di fonte"></div>
+        `;
+        modalEl.appendChild(section1El);
+
+        if (allowedTypes.length <= 1) {
+            section1El.style.display = "none";
+        }
+
+        const cardsGrid = section1El.querySelector(".ag-picker-grid");
+        const cardDefs = [
+            {
+                type: "notebooklm",
+                icon: "🧠",
+                name: "NotebookLM",
+                desc: withStudies ? "NotebookLM + studi scientifici cercati in automatico" : "Note e documenti caricati su NotebookLM"
+            },
+            {
+                type: "youtube",
+                icon: "🎥",
+                name: "Video YouTube",
+                desc: "Trascrizione e analisi da link YouTube"
+            },
+            {
+                type: "web",
+                icon: "🌐",
+                name: "Sito Online",
+                desc: "Analisi ed estrazione contenuti da pagina web"
+            },
+            {
+                type: "local_files",
+                icon: "📚",
+                name: "File Locali",
+                desc: "Documenti PDF, Markdown o file di testo"
+            },
+            ...(withStudies ? [{
+                type: "studies",
+                icon: "🔬",
+                name: "Solo studi scientifici",
+                desc: "L'AI cerca, legge e valuta gli studi sull'argomento"
+            }] : [])
+        ];
+
+        const cardElements = {};
+        for (const def of cardDefs) {
+            if (!allowedTypes.includes(def.type)) continue;
+            const card = document.createElement("div");
+            card.className = "ag-picker-card" + (def.type === activeType ? " is-selected" : "");
+            card.setAttribute("role", "radio");
+            card.setAttribute("aria-checked", def.type === activeType ? "true" : "false");
+            card.setAttribute("tabindex", "0");
+            card.innerHTML = `
+                <div class="ag-picker-card-icon">${def.icon}</div>
+                <div class="ag-picker-card-name">${escapeHtml(def.name)}</div>
+                <div class="ag-picker-card-desc">${escapeHtml(def.desc)}</div>
+            `;
+            card.onclick = () => switchActiveType(def.type);
+            card.onkeydown = (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    switchActiveType(def.type);
+                } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                    e.preventDefault();
+                    const curIdx = allowedTypes.indexOf(def.type);
+                    const nextType = allowedTypes[(curIdx + 1) % allowedTypes.length];
+                    if (cardElements[nextType]) {
+                        switchActiveType(nextType);
+                        cardElements[nextType].focus();
+                    }
+                } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                    e.preventDefault();
+                    const curIdx = allowedTypes.indexOf(def.type);
+                    const prevType = allowedTypes[(curIdx - 1 + allowedTypes.length) % allowedTypes.length];
+                    if (cardElements[prevType]) {
+                        switchActiveType(prevType);
+                        cardElements[prevType].focus();
+                    }
+                }
+            };
+            cardsGrid.appendChild(card);
+            cardElements[def.type] = card;
+        }
+
+        // 3. Sezione 2: Contestuale
+        const contextualSectionEl = document.createElement("div");
+        contextualSectionEl.className = "ag-picker-section ag-picker-section-contextual";
+        contextualSectionEl.innerHTML = `
+            <div class="ag-picker-section-label ag-picker-contextual-label">Dettagli fonte</div>
+            <div class="ag-picker-contextual"></div>
+        `;
+        modalEl.appendChild(contextualSectionEl);
+        const contextualEl = contextualSectionEl.querySelector(".ag-picker-contextual");
+
+        // 4. Sezione 3: Conoscenza AI (Segmented control)
+        const knowledgeSectionEl = document.createElement("div");
+        knowledgeSectionEl.className = "ag-picker-section ag-picker-knowledge-section";
+        knowledgeSectionEl.innerHTML = `
+            <div class="ag-picker-section-label">Modalità Conoscenza per NotebookLM</div>
+            <div class="ag-picker-segmented" role="radiogroup" aria-label="Modalità conoscenza">
+                <button type="button" class="ag-picker-segment ${!allowBaseKnowledge ? 'is-selected' : ''}" role="radio" aria-checked="${!allowBaseKnowledge}">
+                    <span class="ag-picker-seg-title">🔒 1. Solo NotebookLM</span>
+                    <span class="ag-picker-seg-sub">Esclusivo — Zero conoscenza esterna</span>
+                </button>
+                <button type="button" class="ag-picker-segment ${allowBaseKnowledge ? 'is-selected' : ''}" role="radio" aria-checked="${allowBaseKnowledge}">
+                    <span class="ag-picker-seg-title">🧠+🌐 2. NotebookLM + AI</span>
+                    <span class="ag-picker-seg-sub">Fonte primaria + Conoscenza interna AI</span>
+                </button>
+            </div>
+        `;
+        modalEl.appendChild(knowledgeSectionEl);
+
+        const segButtons = knowledgeSectionEl.querySelectorAll(".ag-picker-segment");
+        segButtons[0].onclick = () => {
+            allowBaseKnowledge = false;
+            segButtons[0].classList.add("is-selected");
+            segButtons[0].setAttribute("aria-checked", "true");
+            segButtons[1].classList.remove("is-selected");
+            segButtons[1].setAttribute("aria-checked", "false");
+            updateSummary();
+        };
+        segButtons[1].onclick = () => {
+            allowBaseKnowledge = true;
+            segButtons[1].classList.add("is-selected");
+            segButtons[1].setAttribute("aria-checked", "true");
+            segButtons[0].classList.remove("is-selected");
+            segButtons[0].setAttribute("aria-checked", "false");
+            updateSummary();
+        };
+
+        // 5. Footer
+        const footerEl = document.createElement("div");
+        footerEl.className = "ag-picker-footer";
+        footerEl.innerHTML = `
+            <div class="ag-picker-summary" aria-live="polite">Caricamento...</div>
+            <div class="ag-picker-footer-buttons">
+                <button type="button" class="ag-picker-btn ag-picker-btn-cancel">Annulla</button>
+                <button type="button" class="ag-picker-btn mod-cta ag-picker-btn-confirm" disabled>Avvia</button>
+            </div>
+        `;
+        modalEl.appendChild(footerEl);
+
+        const summaryEl = footerEl.querySelector(".ag-picker-summary");
+        const cancelBtn = footerEl.querySelector(".ag-picker-btn-cancel");
+        const confirmBtn = footerEl.querySelector(".ag-picker-btn-confirm");
+
+        const isValid = () => {
+            if (activeType === "notebooklm") return selectedNotebooks.length > 0;
+            if (activeType === "youtube") return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/.+/i.test(youtubeUrl.trim());
+            if (activeType === "web") return /^https?:\/\/[^\s$.?#].[^\s]*$/i.test(webUrl.trim());
+            if (activeType === "local_files") return pickedFiles.length > 0;
+            if (activeType === "studies") return true;
+            return false;
+        };
+
+        const updateSummary = () => {
+            const valid = isValid();
+            confirmBtn.disabled = !valid;
+
+            if (activeType === "notebooklm") {
+                if (!selectedNotebooks.length) {
+                    summaryEl.textContent = "NotebookLM · Seleziona almeno un notebook";
+                } else {
+                    const count = selectedNotebooks.length;
+                    const nLabel = count === 1 ? "1 notebook" : `${count} notebook`;
+                    const kLabel = allowBaseKnowledge ? "+ conoscenza AI" : "solo fonti";
+                    summaryEl.textContent = `NotebookLM · ${nLabel} · ${kLabel}`;
+                }
+            } else if (activeType === "youtube") {
+                summaryEl.textContent = valid ? "YouTube · URL pronto" : "YouTube · Inserisci un link YouTube valido";
+            } else if (activeType === "web") {
+                summaryEl.textContent = valid ? "Sito Web · URL pronto" : "Sito Web · Inserisci un URL valido (https://...)";
+            } else if (activeType === "local_files") {
+                if (!pickedFiles.length) {
+                    summaryEl.textContent = "File locali · Seleziona almeno un file";
+                } else {
+                    summaryEl.textContent = `File locali · ${pickedFiles.length} ${pickedFiles.length === 1 ? "file selezionato" : "file selezionati"}`;
+                }
+            } else if (activeType === "studies") {
+                summaryEl.textContent = "Solo studi scientifici · Ricerca automatica";
+            }
+        };
+
+        const switchActiveType = (newType) => {
+            activeType = newType;
+            for (const [t, card] of Object.entries(cardElements)) {
+                const isSel = t === activeType;
+                card.classList.toggle("is-selected", isSel);
+                card.setAttribute("aria-checked", isSel ? "true" : "false");
+            }
+
+            if (activeType === "notebooklm" && !hideKnowledgeSection) {
+                knowledgeSectionEl.style.display = "";
+            } else {
+                knowledgeSectionEl.style.display = "none";
+            }
+
+            renderContextual();
+            updateSummary();
+        };
+
+        const renderContextual = () => {
+            contextualEl.innerHTML = "";
+
+            if (activeType === "notebooklm") {
+                const searchWrap = document.createElement("div");
+                searchWrap.className = "ag-picker-search-wrap";
+                searchWrap.innerHTML = `<input type="search" class="ag-picker-input ag-picker-search" placeholder="Cerca notebook per titolo o ID..." value="${escapeHtml(notebookSearchQuery)}" aria-label="Cerca notebook">`;
+                contextualEl.appendChild(searchWrap);
+                const sInput = searchWrap.querySelector("input");
+                sInput.oninput = (e) => {
+                    notebookSearchQuery = e.target.value;
+                    renderNotebookList();
+                };
+
+                const counterEl = document.createElement("div");
+                counterEl.className = "ag-picker-counter";
+                contextualEl.appendChild(counterEl);
+
+                const listContainer = document.createElement("div");
+                listContainer.className = "ag-picker-notebook-list";
+                let notebooksLoading = !validNotebooks.length && !!opts.notebooksPromise;
+                contextualEl.appendChild(listContainer);
+
+                const manualRow = document.createElement("div");
+                manualRow.className = "ag-picker-manual-row";
+                manualRow.innerHTML = `
+                    <input type="text" class="ag-picker-input ag-picker-manual-input" placeholder="Aggiungi ID o Titolo personalizzato...">
+                    <button type="button" class="ag-picker-btn ag-picker-manual-btn">Aggiungi</button>
+                `;
+                contextualEl.appendChild(manualRow);
+                const manualInput = manualRow.querySelector(".ag-picker-manual-input");
+                const manualAddBtn = manualRow.querySelector(".ag-picker-manual-btn");
+
+                const handleAddManual = () => {
+                    const val = manualInput.value.trim();
+                    if (val) {
+                        if (!selectedNotebooks.some(s => s.id === val)) {
+                            selectedNotebooks.push({ id: val, title: val, sources: 0 });
+                        }
+                        if (!validNotebooks.some(s => s.id === val)) {
+                            validNotebooks.unshift({ id: val, title: val, sources: 0 });
+                        }
+                        manualInput.value = "";
+                        renderNotebookList();
+                        updateSummary();
+                    }
+                };
+                manualAddBtn.onclick = handleAddManual;
+                manualInput.onkeydown = (e) => {
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleAddManual();
+                    }
+                };
+
+                const renderNotebookList = () => {
+                    if (!modalContainer.isConnected) return;
+                    listContainer.innerHTML = "";
+                    if (notebooksLoading) {
+                        listContainer.setAttribute("aria-busy", "true");
+                        listContainer.setAttribute("aria-label", "Caricamento dei notebook…");
+                        listContainer.innerHTML = '<span class="ag-picker-sr-only">Caricamento dei notebook…</span>' + Array.from({ length: 4 }, () => '<div class="ag-picker-skeleton"><div class="ag-picker-skeleton-bar ag-picker-skeleton-title"></div><div class="ag-picker-skeleton-bar ag-picker-skeleton-meta"></div></div>').join("");
+                        return;
+                    }
+                    listContainer.removeAttribute("aria-busy");
+                    const count = selectedNotebooks.length;
+                    counterEl.textContent = count === 0
+                        ? "Nessun notebook selezionato"
+                        : (count === 1 ? "1 notebook selezionato" : `${count} notebook selezionati`);
+
+                    const q = notebookSearchQuery.trim().toLowerCase();
+                    const filtered = validNotebooks.filter(nb => !q || (nb.title || "").toLowerCase().includes(q) || (nb.id || "").toLowerCase().includes(q));
+
+                    if (filtered.length === 0) {
+                        const emptyEl = document.createElement("div");
+                        emptyEl.className = "ag-picker-empty-state";
+                        emptyEl.textContent = validNotebooks.length === 0
+                            ? "Nessun notebook trovato: inserisci un ID manuale qui sotto"
+                            : "Nessun notebook corrispondente alla ricerca";
+                        listContainer.appendChild(emptyEl);
+                        return;
+                    }
+
+                    for (const nb of filtered) {
+                        const isSelected = selectedNotebooks.some(s => s.id === nb.id);
+                        const itemEl = document.createElement("div");
+                        itemEl.className = "ag-picker-notebook-item" + (isSelected ? " is-selected" : "");
+                        itemEl.setAttribute("role", "checkbox");
+                        itemEl.setAttribute("aria-checked", isSelected ? "true" : "false");
+                        itemEl.setAttribute("tabindex", "0");
+
+                        const shortId = nb.id.length > 8 ? `${nb.id.slice(0, 8)}…` : nb.id;
+                        const sourcesText = `${nb.sources || 0} ${nb.sources === 1 ? 'fonte' : 'fonti'}`;
+
+                        itemEl.innerHTML = `
+                            <input type="checkbox" class="ag-picker-checkbox" ${isSelected ? 'checked' : ''} tabindex="-1">
+                            <div class="ag-picker-notebook-info">
+                                <div class="ag-picker-notebook-title">${escapeHtml(nb.title || "(Senza titolo)")}</div>
+                                <div class="ag-picker-notebook-meta">${sourcesText} · <span class="ag-picker-mono">${escapeHtml(shortId)}</span></div>
+                            </div>
+                        `;
+
+                        const toggle = () => {
+                            const idx = selectedNotebooks.findIndex(s => s.id === nb.id);
+                            if (idx >= 0) {
+                                selectedNotebooks.splice(idx, 1);
+                            } else {
+                                selectedNotebooks.push({
+                                    id: nb.id,
+                                    title: nb.title || nb.id,
+                                    sources: nb.sources || 0
+                                });
+                            }
+                            renderNotebookList();
+                            updateSummary();
+                        };
+
+                        itemEl.onclick = toggle;
+                        itemEl.onkeydown = (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                toggle();
+                            }
+                        };
+                        listContainer.appendChild(itemEl);
+                    }
+                };
+
+                renderNotebookList();
+                if (opts.notebooksPromise) {
+                    const hadCached = validNotebooks.length > 0;
+                    opts.notebooksPromise.then((fresh) => {
+                        if (!modalContainer.isConnected) return;
+                        const merged = new Map();
+                        for (const nb of [...(Array.isArray(fresh) ? fresh : []), ...validNotebooks, ...selectedNotebooks]) {
+                            if (nb && nb.id && !merged.has(nb.id)) merged.set(nb.id, nb);
+                        }
+                        validNotebooks.splice(0, validNotebooks.length, ...merged.values());
+                        notebooksLoading = false;
+                        renderNotebookList();
+                        updateSummary();
+                    }).catch(() => {
+                        if (!modalContainer.isConnected) return;
+                        notebooksLoading = false;
+                        if (!hadCached) {
+                            renderNotebookList();
+                            const error = document.createElement("div");
+                            error.className = "ag-picker-muted-hint";
+                            error.textContent = "Aggiornamento dei notebook non riuscito.";
+                            listContainer.appendChild(error);
+                        }
+                    });
+                }
+
+            } else if (activeType === "youtube") {
+                const wrap = document.createElement("div");
+                wrap.className = "ag-picker-field-wrap";
+                wrap.innerHTML = `
+                    <label class="ag-picker-label" for="ag-yt-url-input">URL del Video YouTube</label>
+                    <input type="url" id="ag-yt-url-input" class="ag-picker-input" placeholder="https://www.youtube.com/watch?v=..." value="${escapeHtml(youtubeUrl)}">
+                    <div class="ag-picker-error" style="display: none;"></div>
+                `;
+                contextualEl.appendChild(wrap);
+                const input = wrap.querySelector("input");
+                const errorEl = wrap.querySelector(".ag-picker-error");
+
+                input.oninput = (e) => {
+                    youtubeUrl = e.target.value;
+                    const val = youtubeUrl.trim();
+                    const isYt = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/.+/i.test(val);
+                    if (!val) {
+                        errorEl.style.display = "none";
+                    } else if (!isYt) {
+                        errorEl.textContent = "Inserisci un URL valido di YouTube (es. https://www.youtube.com/watch?v=...)";
+                        errorEl.style.display = "block";
+                    } else {
+                        errorEl.style.display = "none";
+                    }
+                    updateSummary();
+                };
+                setTimeout(() => input.focus(), 50);
+
+            } else if (activeType === "web") {
+                const wrap = document.createElement("div");
+                wrap.className = "ag-picker-field-wrap";
+                wrap.innerHTML = `
+                    <label class="ag-picker-label" for="ag-web-url-input">URL della Pagina Web</label>
+                    <input type="url" id="ag-web-url-input" class="ag-picker-input" placeholder="https://example.com/articolo..." value="${escapeHtml(webUrl)}">
+                    <div class="ag-picker-error" style="display: none;"></div>
+                `;
+                contextualEl.appendChild(wrap);
+                const input = wrap.querySelector("input");
+                const errorEl = wrap.querySelector(".ag-picker-error");
+
+                input.oninput = (e) => {
+                    webUrl = e.target.value;
+                    const val = webUrl.trim();
+                    const isWeb = /^https?:\/\/[^\s$.?#].[^\s]*$/i.test(val);
+                    if (!val) {
+                        errorEl.style.display = "none";
+                    } else if (!isWeb) {
+                        errorEl.textContent = "Inserisci un URL web valido (es. https://...)";
+                        errorEl.style.display = "block";
+                    } else {
+                        errorEl.style.display = "none";
+                    }
+                    updateSummary();
+                };
+                setTimeout(() => input.focus(), 50);
+
+            } else if (activeType === "local_files") {
+                const wrap = document.createElement("div");
+                wrap.className = "ag-picker-field-wrap";
+                wrap.innerHTML = `
+                    <div class="ag-picker-actions-row">
+                        <button type="button" class="ag-picker-btn ag-picker-browse-btn">📁 Scegli file dal computer…</button>
+                        <span class="ag-picker-muted-hint">PDF, TXT o Markdown</span>
+                    </div>
+                    <div class="ag-picker-file-list"></div>
+                    <div class="ag-picker-vault-fallback">
+                        <div class="ag-picker-section-label" style="margin-top: 8px;">Oppure scegli dal vault:</div>
+                        <input type="search" class="ag-picker-input ag-picker-vault-search" placeholder="Cerca nota o file nel vault...">
+                        <div class="ag-picker-vault-results" style="display: none;"></div>
+                    </div>
+                `;
+                contextualEl.appendChild(wrap);
+
+                const browseBtn = wrap.querySelector(".ag-picker-browse-btn");
+                const fileListEl = wrap.querySelector(".ag-picker-file-list");
+                const vaultSearchInput = wrap.querySelector(".ag-picker-vault-search");
+                const vaultResultsEl = wrap.querySelector(".ag-picker-vault-results");
+
+                const renderFileList = () => {
+                    fileListEl.innerHTML = "";
+                    if (!pickedFiles.length) {
+                        fileListEl.innerHTML = `<div class="ag-picker-empty-state" style="padding: 8px 0;">Nessun file selezionato</div>`;
+                        return;
+                    }
+                    for (let i = 0; i < pickedFiles.length; i++) {
+                        const filePath = pickedFiles[i];
+                        const itemEl = document.createElement("div");
+                        itemEl.className = "ag-picker-file-item";
+                        itemEl.innerHTML = `
+                            <span class="ag-picker-file-icon">📄</span>
+                            <span class="ag-picker-file-path" title="${escapeHtml(filePath)}">${escapeHtml(path.basename(filePath))}</span>
+                            <button type="button" class="ag-picker-file-remove" aria-label="Rimuovi file" title="Rimuovi">✕</button>
+                        `;
+                        itemEl.querySelector(".ag-picker-file-remove").onclick = () => {
+                            pickedFiles.splice(i, 1);
+                            renderFileList();
+                            updateSummary();
+                        };
+                        fileListEl.appendChild(itemEl);
+                    }
+                };
+
+                browseBtn.onclick = async () => {
+                    browseBtn.disabled = true;
+                    try {
+                        const chosen = await pickLocalFilesWithAppleScript();
+                        if (Array.isArray(chosen) && chosen.length > 0) {
+                            for (const f of chosen) {
+                                if (!pickedFiles.includes(f)) pickedFiles.push(f);
+                            }
+                            renderFileList();
+                            updateSummary();
+                        }
+                    } catch (_) {}
+                    browseBtn.disabled = false;
+                };
+
+                vaultSearchInput.oninput = (e) => {
+                    const q = e.target.value.trim().toLowerCase();
+                    vaultResultsEl.innerHTML = "";
+                    if (!q || !app || !app.vault) {
+                        vaultResultsEl.style.display = "none";
+                        return;
+                    }
+                    const files = app.vault.getFiles().filter(f => !f.path.startsWith("."));
+                    const matches = files.filter(f => f.path.toLowerCase().includes(q)).slice(0, 5);
+                    if (!matches.length) {
+                        vaultResultsEl.innerHTML = `<div class="ag-picker-empty-state">Nessun file trovato nel vault</div>`;
+                        vaultResultsEl.style.display = "block";
+                        return;
+                    }
+                    for (const f of matches) {
+                        const rEl = document.createElement("div");
+                        rEl.className = "ag-picker-vault-result-item";
+                        rEl.textContent = `📄 ${f.path}`;
+                        rEl.onclick = () => {
+                            const full = path.join(vaultBasePath, f.path);
+                            if (!pickedFiles.includes(full)) pickedFiles.push(full);
+                            vaultSearchInput.value = "";
+                            vaultResultsEl.style.display = "none";
+                            renderFileList();
+                            updateSummary();
+                        };
+                        vaultResultsEl.appendChild(rEl);
+                    }
+                    vaultResultsEl.style.display = "block";
+                };
+
+                renderFileList();
+
+            } else if (activeType === "studies") {
+                const info = document.createElement("div");
+                info.className = "ag-picker-info-box";
+                info.innerHTML = `
+                    <div class="ag-picker-info-icon">🔬</div>
+                    <div class="ag-picker-info-text">
+                        <strong>Ricerca e analisi scientifica autonoma</strong>
+                        <p>L'AI effettuerà una scansione su banche dati scientifiche (PubMed, PMC, arXiv), valutando criticamente la gerarchia delle evidenze (meta-analisi, RCT) per redigere la nota.</p>
+                    </div>
+                `;
+                contextualEl.appendChild(info);
+            }
+        };
+
+        const cleanup = () => {
+            document.removeEventListener("keydown", handleKeydown, true);
+            if (modalContainer.parentNode) {
+                modalContainer.parentNode.removeChild(modalContainer);
+            }
+        };
+
+        const doConfirm = () => {
+            if (!isValid()) return;
+            submitted = true;
+            cleanup();
+
+            if (activeType === "studies") {
+                resolve({
+                    type: "studies",
+                    label: "Studi scientifici (ricerca automatica)",
+                    value: ""
+                });
+            } else if (activeType === "youtube") {
+                resolve({
+                    type: "youtube",
+                    label: "Video YouTube",
+                    value: youtubeUrl.trim()
+                });
+            } else if (activeType === "web") {
+                resolve({
+                    type: "web",
+                    label: "Sito Online",
+                    value: webUrl.trim()
+                });
+            } else if (activeType === "local_files") {
+                resolve({
+                    type: "local_files",
+                    label: `File Locali (${pickedFiles.length} file)`,
+                    value: pickedFiles
+                });
+            } else if (activeType === "notebooklm") {
+                const titlesSummary = selectedNotebooks.map(n => n.title).join(" + ");
+                resolve({
+                    type: "notebooklm",
+                    label: selectedNotebooks.length === 1
+                        ? `NotebookLM: ${selectedNotebooks[0].title}`
+                        : `NotebookLM Multiplo (${selectedNotebooks.length} fonti: ${titlesSummary})`,
+                    value: selectedNotebooks,
+                    notebooks: selectedNotebooks.map(n => n.id),
+                    notebook_details: selectedNotebooks,
+                    allow_base_knowledge: allowBaseKnowledge
+                });
+            }
+        };
+
+        confirmBtn.onclick = doConfirm;
+        cancelBtn.onclick = () => {
+            cleanup();
+            if (!submitted) resolve(null);
+        };
+        headerEl.querySelector(".ag-picker-close-btn").onclick = () => {
+            cleanup();
+            if (!submitted) resolve(null);
+        };
+        modalBg.onclick = () => {
+            cleanup();
+            if (!submitted) resolve(null);
+        };
+
+        const handleKeydown = (e) => {
+            if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                cleanup();
+                if (!submitted) resolve(null);
+                return;
+            }
+
+            if (e.key === "Enter") {
+                const target = e.target;
+                if (target && target.classList && target.classList.contains("ag-picker-manual-input")) {
+                    return;
+                }
+                if (target && target.tagName === "BUTTON") {
+                    return;
+                }
+                if (isValid()) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    doConfirm();
+                }
+            }
+        };
+
+        document.addEventListener("keydown", handleKeydown, true);
+        document.body.appendChild(modalContainer);
+
+        switchActiveType(activeType);
+
+        setTimeout(() => {
+            if (allowedTypes.length > 1 && cardElements[activeType]) {
+                cardElements[activeType].focus();
+            } else {
+                const firstInput = modalEl.querySelector(".ag-picker-input");
+                if (firstInput) firstInput.focus();
+            }
+        }, 60);
+    });
+}
+
+// Fallback legacy per selectSourceInteractive (suggester classico)
+async function legacySelectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Passo 4/8: Seleziona la Fonte:", discipline = "") {
+    const withStudies = discipline === "Bodybuilding";
     const normalSourceOptions = [
-        { label: "🧠 NotebookLM", value: "notebooklm" },
+        ...(withStudies ? [{ label: "🔬 Solo studi scientifici (l'AI cerca, legge e valuta gli studi sull'argomento)", value: "studies" }] : []),
+        { label: withStudies ? "🧠 NotebookLM (+ studi scientifici cercati in automatico)" : "🧠 NotebookLM", value: "notebooklm" },
         { label: "🎥 Video YouTube", value: "youtube" },
         { label: "🌐 Sito Online", value: "web" },
         { label: "📚 Lezione / File Locali", value: "local_files" }
@@ -1268,6 +2132,14 @@ async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Pa
 
     if (!chosenSourceType) {
         return null;
+    }
+
+    if (chosenSourceType === "studies") {
+        return {
+            type: "studies",
+            label: "Studi scientifici (ricerca automatica)",
+            value: ""
+        };
     }
 
     if (chosenSourceType === "youtube") {
@@ -1316,45 +2188,20 @@ async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Pa
             value: pickedFiles
         };
     } else if (chosenSourceType === "notebooklm") {
-        // Passo 5: Modalità Conoscenza
         const chosenKnowledge = await promptKnowledgeMode(tp);
         if (chosenKnowledge === null || chosenKnowledge === undefined) {
             return null;
         }
-        // Passo 7: Selezione Multipla NotebookLM
-        return await selectNotebookLMInteractive(tp, "Passo 7/8: Seleziona i NotebookLM:", vaultBasePath, chosenKnowledge);
+        return await legacySelectNotebookLMInteractive(tp, "Passo 7/8: Seleziona i NotebookLM:", vaultBasePath, chosenKnowledge);
     }
     return null;
 }
 
-// Helper: Selezione Modalità Conoscenza per NotebookLM
-async function promptKnowledgeMode(tp) {
-    await new Promise(resolve => setTimeout(resolve, 80));
-    const knowledgeOptions = [
-        "🔒 1. Solo NotebookLM (Esclusivo — Zero conoscenza esterna)",
-        "🧠+🌐 2. NotebookLM (Fonte Primaria) + Conoscenza Interna AI"
-    ];
-    const knowledgeValues = [false, true];
-
-    const chosenKnowledge = await tp.system.suggester(
-        knowledgeOptions,
-        knowledgeValues,
-        false,
-        "Passo 5/8: Modalità Conoscenza per NotebookLM:"
-    );
-
-    if (chosenKnowledge === null || chosenKnowledge === undefined) {
-        return null;
-    }
-    return chosenKnowledge;
-}
-
-// Helper: Selezione NotebookLM Multipla tramite Tendina Nativa Suggester (Tasto INVIO per selezionare)
-async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona NotebookLM:", vaultBasePath = "", preselectedKnowledge = null) {
+// Fallback legacy per selectNotebookLMInteractive (suggester classico a ciclo)
+async function legacySelectNotebookLMInteractive(tp, promptHeadline = "Seleziona NotebookLM:", vaultBasePath = "", preselectedKnowledge = null) {
     const allNotebooks = await getNotebookLMList(vaultBasePath);
     const validNotebooks = allNotebooks.filter(nb => nb && nb.id);
 
-    // Fallback: se nessun notebook rilevato via CLI o cache, richiedi input testuale manuale
     if (validNotebooks.length === 0) {
         const manualInput = await tp.system.prompt(
             `${promptHeadline}\nNessun notebook rilevato. Inserisci ID o Nome del NotebookLM:`,
@@ -1387,13 +2234,11 @@ async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona Noteb
         const options = [];
         const values = [];
 
-        // 1. In cima alla tendina: Opzione di conferma attiva se ci sono selezioni
         if (selectedNotebooks.length > 0) {
             options.push(`🚀 CONFERMA E AVVIA (${selectedNotebooks.length} notebook selezionati)`);
             values.push({ action: "confirm" });
         }
 
-        // 2. Elenco notebook: spunta ☑️ se già selezionato, ◻️ altrimenti
         for (const nb of validNotebooks) {
             const isSelected = selectedNotebooks.some(s => s.id === nb.id);
             const checkMark = isSelected ? "☑️ " : "◻️ ";
@@ -1405,14 +2250,12 @@ async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona Noteb
             values.push({ action: "toggle", notebook: nb });
         }
 
-        // 3. Opzioni di controllo in fondo alla tendina
         options.push("✏️ Inserisci ID o Nome personalizzato...");
         values.push({ action: "manual" });
 
         options.push("❌ Annulla operazione");
         values.push({ action: "cancel" });
 
-        // Pausa di 100ms tra le aperture del suggester per disaccoppiare gli eventi DOM di Obsidian
         await new Promise(resolve => setTimeout(resolve, 100));
 
         const countInfo = selectedNotebooks.length > 0 ? ` [${selectedNotebooks.length} selezionati]` : "";
@@ -1423,7 +2266,6 @@ async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona Noteb
             `${promptHeadline}${countInfo} - Premi INVIO per selezionare/deselezionare:`
         );
 
-        // Se l'utente preme ESC (choice è null o undefined): annulla ed esci subito
         if (!choice) {
             return null;
         }
@@ -1491,6 +2333,80 @@ async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona Noteb
         notebook_details: selectedNotebooks,
         allow_base_knowledge: chosenKnowledge
     };
+}
+
+// Helper: Selettore interattivo unificato per fonti esterne
+async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Passo 4/8: Seleziona la Fonte:", discipline = "") {
+    try {
+        const currentApp = app || (typeof tp !== "undefined" && tp?.app) || (typeof window !== "undefined" && window.app);
+        const { cached: notebooks, fresh: notebooksPromise } = getNotebookLMListFast(vaultBasePath);
+        const stepMatch = (promptTitle || "").match(/(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+/i);
+        const step = stepMatch ? stepMatch[0] : "";
+        const cleanTitle = (promptTitle || "").replace(/^(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+:\s*/i, "").replace(/:$/, "").trim();
+
+        const result = await openSourcePickerModal(currentApp, {
+            title: cleanTitle || promptTitle,
+            step: step,
+            discipline: discipline,
+            vaultBasePath: vaultBasePath,
+            notebooks: notebooks,
+            notebooksPromise: notebooksPromise,
+            preselectedKnowledge: null,
+            allowedTypes: null
+        });
+        return result;
+    } catch (err) {
+        console.error("openSourcePickerModal failed, using legacy:", err);
+        return await legacySelectSourceInteractive(tp, app, vaultBasePath, promptTitle, discipline);
+    }
+}
+
+// Helper: Selezione Modalità Conoscenza per NotebookLM
+async function promptKnowledgeMode(tp) {
+    await new Promise(resolve => setTimeout(resolve, 80));
+    const knowledgeOptions = [
+        "🔒 1. Solo NotebookLM (Esclusivo — Zero conoscenza esterna)",
+        "🧠+🌐 2. NotebookLM (Fonte Primaria) + Conoscenza Interna AI"
+    ];
+    const knowledgeValues = [false, true];
+
+    const chosenKnowledge = await tp.system.suggester(
+        knowledgeOptions,
+        knowledgeValues,
+        false,
+        "Passo 5/8: Modalità Conoscenza per NotebookLM:"
+    );
+
+    if (chosenKnowledge === null || chosenKnowledge === undefined) {
+        return null;
+    }
+    return chosenKnowledge;
+}
+
+// Helper: Selezione NotebookLM Multipla tramite Modal moderno con fallback a suggester
+async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona NotebookLM:", vaultBasePath = "", preselectedKnowledge = null) {
+    try {
+        const currentApp = (typeof tp !== "undefined" && tp?.app) || (typeof window !== "undefined" && window.app);
+        const { cached: notebooks, fresh: notebooksPromise } = getNotebookLMListFast(vaultBasePath);
+        const stepMatch = (promptHeadline || "").match(/(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+/i);
+        const step = stepMatch ? stepMatch[0] : "";
+        const cleanTitle = (promptHeadline || "").replace(/^(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+:\s*/i, "").replace(/:$/, "").trim();
+
+        const result = await openSourcePickerModal(currentApp, {
+            title: cleanTitle || promptHeadline,
+            step: step,
+            discipline: "",
+            vaultBasePath: vaultBasePath,
+            notebooks: notebooks,
+            notebooksPromise: notebooksPromise,
+            preselectedKnowledge: preselectedKnowledge,
+            allowedTypes: ["notebooklm"]
+        });
+        return result;
+    } catch (err) {
+        console.error("openSourcePickerModal for NotebookLM failed, using legacy:", err);
+        return await legacySelectNotebookLMInteractive(tp, promptHeadline, vaultBasePath, preselectedKnowledge);
+    }
 }
 
 // =============================================================================
@@ -1821,9 +2737,13 @@ async function runMocBatchFlow(tp, app, vaultBasePath) {
 
     let discipline = plan.discipline;
     if (!discipline) {
+        let batchDisciplines = ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia", "Bodybuilding", "Nutrizione e Salute", "Chimica", "Droghe", "Tecnologia ed Elettronica", "Musica e Industria Musicale", "Arte e Storia dell'Arte", "Filosofia", "Letteratura", "Analisi Narrativa", "Storia", "Politica e Geopolitica", "Economia e Finanza", "Psicologia"];
+        try {
+            const reg = JSON.parse(fs.readFileSync(path.join(vaultBasePath, ".antigravity", "disciplines.json"), "utf8"));
+            if (Array.isArray(reg.disciplines)) batchDisciplines = reg.disciplines.map(d => d.name);
+        } catch (_) {}
         const d = await tp.system.suggester(
-            ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia", "Bodybuilding", "Nutrizione e Salute", "Chimica", "Droghe", "Tecnologia ed Elettronica", "Musica e Industria Musicale", "Arte e Storia dell'Arte", "Filosofia", "Letteratura", "Analisi Narrativa", "Storia", "Politica e Geopolitica", "Economia e Finanza", "Psicologia"],
-            ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia", "Bodybuilding", "Nutrizione e Salute", "Chimica", "Droghe", "Tecnologia ed Elettronica", "Musica e Industria Musicale", "Arte e Storia dell'Arte", "Filosofia", "Letteratura", "Analisi Narrativa", "Storia", "Politica e Geopolitica", "Economia e Finanza", "Psicologia"],
+            batchDisciplines, batchDisciplines,
             false,
             `Il MOC non ha la proprietà Disciplina: in quale disciplina salvare le note?`
         );
@@ -1861,10 +2781,26 @@ async function runMocBatchFlow(tp, app, vaultBasePath) {
         parallel: 2,
         notes: notes.slice(0, limit)
     };
+    launchBatch(app, vaultBasePath, cfg);
+}
+
+/**
+ * Avvia moc_batch.py su una config già pronta e mostra l'HUD del batch. Lo usano il menu e la barra del tutor.
+ */
+function launchBatch(app, vaultBasePath, cfg) {
+    if (isBatchActive()) {
+        try { const { Notice } = require("obsidian"); new Notice("Un batch di Antigravity è già in corso: aspetta che finisca.", 5000); } catch (_) {}
+        return;
+    }
+    if (!cfg.notes || !cfg.notes.length) {
+        try { const { Notice } = require("obsidian"); new Notice("Nessuna nota da creare.", 4000); } catch (_) {}
+        return;
+    }
     const runtimeDir = getRuntimeDir();
+    const batchScript = path.join(vaultBasePath, ".antigravity", "tools", "moc_batch.py");
     const cfgPath = path.join(runtimeDir, "batch-config.json");
     fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf8");
-    try { fs.writeFileSync(path.join(runtimeDir, "batch-status.json"), JSON.stringify({ status: "running", pid: null, moc_name: plan.moc_name, total: cfg.notes.length, index: 0, done: [], failed: [], skipped: [], message: "Avvio del batch...", updated_at: Date.now() }), "utf8"); } catch (_) {}
+    try { fs.writeFileSync(path.join(runtimeDir, "batch-status.json"), JSON.stringify({ status: "running", pid: null, moc_name: cfg.moc_name, total: cfg.notes.length, index: 0, done: [], failed: [], skipped: [], message: "Avvio del batch...", updated_at: Date.now() }), "utf8"); } catch (_) {}
 
     let logFd = "ignore";
     try { logFd = fs.openSync(path.join(runtimeDir, "batch-process.log"), "w"); } catch (_) {}
@@ -1876,6 +2812,220 @@ async function runMocBatchFlow(tp, app, vaultBasePath) {
     });
     child.unref();
     renderBatchHud(app);
+}
+
+/**
+ * Verifica e correzione di note esistenti (correctness_check.py --fix, via agy): un secondo modello corregge gli errori certi
+ * (con backup) e segnala i dubbi nella nota. Per le note nuove o modificate lo fa già la pipeline.
+ */
+async function runCorrectnessFlow(tp, app, vaultBasePath) {
+    const script = path.join(vaultBasePath, ".antigravity", "tools", "correctness_check.py");
+    const notes = app.vault.getMarkdownFiles().filter(f => !f.path.startsWith("."));
+    const activeFile = app.workspace.getActiveFile();
+    const scopeOptions = [];
+    if (activeFile && activeFile.extension === "md" && !activeFile.path.startsWith(".")) {
+        scopeOptions.push({ label: `⭐ Nota attiva: ${activeFile.basename}`, value: "active" });
+    }
+    scopeOptions.push(
+        { label: "📄 Scegli una nota", value: "note" },
+        { label: "🗺️ Tutte le note collegate a un MOC", value: "moc" },
+        { label: "📁 Tutte le note di una cartella", value: "folder" }
+    );
+    const scope = await tp.system.suggester(scopeOptions.map(o => o.label), scopeOptions.map(o => o.value), false, "Verifica 1/2: Cosa vuoi verificare e correggere?");
+    if (!scope) return;
+
+    let args = null;
+    let count = 1;
+    if (scope === "active") {
+        args = [activeFile.path];
+    } else if (scope === "note") {
+        const file = await tp.system.suggester(notes.map(f => `📄 ${f.basename} (${f.path})`), notes, false, "Verifica 2/2: Scegli la nota");
+        if (!file) return;
+        args = [file.path];
+    } else if (scope === "moc") {
+        const isMoc = f => {
+            const fm = app.metadataCache.getFileCache(f)?.frontmatter || {};
+            const types = Array.isArray(fm.Type) ? fm.Type : (fm.Type ? [fm.Type] : []);
+            return types.some(t => String(t).toLowerCase() === "moc") || /^\d+ MOC/.test(f.path) || f.basename.endsWith(" MOC");
+        };
+        const mocs = notes.filter(isMoc).sort((a, b) => a.basename.localeCompare(b.basename));
+        if (!mocs.length) {
+            if (window.Notice) new window.Notice("Nessun MOC trovato nel vault.", 4000);
+            return;
+        }
+        const linked = f => new Set((app.metadataCache.getFileCache(f)?.links || []).map(l => app.metadataCache.getFirstLinkpathDest(l.link.split("#")[0], f.path)?.path).filter(Boolean)).size;
+        const moc = await tp.system.suggester(mocs.map(f => `🗺️ ${f.basename} (${linked(f)} note collegate)`), mocs, false, "Verifica 2/3: Scegli il MOC");
+        if (!moc) return;
+        const which = await tp.system.suggester(
+            ["▶️ Solo note mai verificate o con errori rimasti", "🔁 Tutte, anche quelle già verificate"],
+            ["pending", "all"], false, "Verifica 3/3: Quali note del MOC?"
+        );
+        if (!which) return;
+        args = ["--moc", moc.path].concat(which === "pending" ? ["--skip-verified", "--recheck"] : []);
+        count = linked(moc);
+    } else {
+        const counts = new Map();
+        for (const f of notes) {
+            const parts = f.path.split("/").slice(0, -1);
+            for (let i = 1; i <= parts.length; i++) counts.set(parts.slice(0, i).join("/"), (counts.get(parts.slice(0, i).join("/")) || 0) + 1);
+        }
+        const folders = [...counts.keys()].sort();
+        const folder = await tp.system.suggester(folders.map(d => `📁 ${d} (${counts.get(d)} note)`), folders, false, "Verifica 2/3: Scegli la cartella");
+        if (!folder) return;
+        const which = await tp.system.suggester(
+            ["▶️ Solo note mai verificate o con errori rimasti", "🔁 Tutte, anche quelle già verificate"],
+            ["pending", "all"], false, "Verifica 3/3: Quali note della cartella?"
+        );
+        if (!which) return;
+        args = ["--folder", folder].concat(which === "pending" ? ["--skip-verified", "--recheck"] : []);
+        count = counts.get(folder);
+    }
+
+    // Più note insieme: un'istanza di agy per nota, consuma la quota di Antigravity più in fretta
+    let parallel = 1;
+    if (count > 1) {
+        parallel = await tp.system.suggester(
+            ["⚡ 3 note alla volta (consigliato)", "🚀 5 note alla volta (più veloce, più quota)", "🐢 1 nota alla volta"],
+            [3, 5, 1], false, "Quante note correggere insieme?"
+        );
+        if (!parallel) return;
+    }
+
+    const runtimeDir = getRuntimeDir();
+    const logPath = path.join(runtimeDir, "correctness.log");
+    let logFd = "ignore";
+    try { logFd = fs.openSync(logPath, "w"); } catch (_) {}
+    const child = child_process.spawn("python3", [script, "--fix", "--parallel", String(parallel)].concat(args), {
+        cwd: vaultBasePath,
+        detached: true,
+        stdio: ["ignore", logFd, logFd],
+        env: getMacOSPathEnv()
+    });
+    child.unref();
+    if (window.Notice) {
+        new window.Notice(count > 1
+            ? `Verifica e correzione avviate: fino a ${count} note, ${parallel} alla volta (circa ${Math.ceil(count / parallel) * 4} minuti). Il dettaglio è in ${logPath}.`
+            : "Verifica e correzione avviate: circa 4 minuti. Le correzioni e i dubbi rimasti finiranno nella nota.", 8000);
+    }
+    child.on("exit", () => {
+        let lines = [];
+        try { lines = fs.readFileSync(logPath, "utf8").split("\n").filter(l => /^\[\d+\/\d+\]/.test(l)); } catch (_) {}
+        const text = lines.length === 1 ? lines[0].replace(/^\[\d+\/\d+\]\s*/, "") : `Verifica conclusa su ${lines.length} note. Dettaglio in ${logPath}.`;
+        if (window.Notice) new window.Notice(text || "Verifica conclusa.", 12000);
+    });
+}
+
+/**
+ * Studi scientifici di Bodybuilding (paper_note.py, via agy): avvio in background con log e avviso finale.
+ * L'ultima riga del log inizia con "RISULTATO:" o "ERRORE:".
+ */
+function spawnPaperNote(vaultBasePath, args, logName, startMsg) {
+    const script = path.join(vaultBasePath, ".antigravity", "tools", "paper_note.py");
+    const logPath = path.join(getRuntimeDir(), logName);
+    let logFd = "ignore";
+    try { logFd = fs.openSync(logPath, "w"); } catch (_) {}
+    const child = child_process.spawn("python3", [script].concat(args), {
+        cwd: vaultBasePath,
+        detached: true,
+        stdio: ["ignore", logFd, logFd],
+        env: getMacOSPathEnv()
+    });
+    child.unref();
+    if (window.Notice) new window.Notice(startMsg, 8000);
+    child.on("exit", () => {
+        let last = "";
+        try {
+            const lines = fs.readFileSync(logPath, "utf8").split("\n").filter(l => /^(RISULTATO|ERRORE):/.test(l));
+            last = lines[lines.length - 1] || "";
+        } catch (_) {}
+        const ok = last.startsWith("RISULTATO:");
+        const text = last ? last.replace(/^(RISULTATO|ERRORE):\s*/, ok ? "✅ " : "❌ ") : `Operazione conclusa. Dettaglio in ${logPath}.`;
+        if (window.Notice) new window.Notice(text, 15000);
+        const m = ok && last.match(/RISULTATO:\s*(\S.*?\.md)\b/);
+        if (m) {
+            try { window.app.workspace.openLinkText(m[1], "", true); } catch (_) {}
+        }
+    });
+}
+
+// Voce di menu "Nota Studio Scientifico": DOI / PMID / PMCID oppure un PDF del vault
+async function runPaperNoteFlow(tp, app, vaultBasePath) {
+    const pdfs = app.vault.getFiles().filter(f => f.extension === "pdf" && !f.path.startsWith("."));
+    const sourceKind = await tp.system.suggester(
+        ["🔢 DOI, PMID o PMCID (testo completo open access)", `📄 PDF presente nel vault (${pdfs.length})`],
+        ["id", "pdf"], false, "Studio 1/2: Da dove prendo lo studio?"
+    );
+    if (!sourceKind) return;
+    let source = null;
+    if (sourceKind === "id") {
+        source = await tp.system.prompt("Studio 2/2: DOI, PMID o PMCID (es. 10.1002/ejsc.70087, 41247250, PMC12621570)");
+        source = (source || "").trim();
+    } else {
+        if (!pdfs.length) {
+            if (window.Notice) new window.Notice("Nessun PDF nel vault: trascinalo prima in una cartella del vault.", 6000);
+            return;
+        }
+        pdfs.sort((a, b) => b.stat.mtime - a.stat.mtime);
+        const file = await tp.system.suggester(pdfs.map(f => `📄 ${f.basename} (${f.parent ? f.parent.path : ""})`), pdfs, false, "Studio 2/2: Scegli il PDF");
+        source = file ? file.path : null;
+    }
+    if (!source) return;
+    const overwrite = await tp.system.suggester(
+        ["▶️ Crea la nota (non sovrascrivere una nota già verificata)", "🔁 Rigenera anche se la nota esiste già"],
+        [false, true], false, "Se la Nota Studio esiste già?"
+    );
+    if (overwrite === null || overwrite === undefined) return;
+    spawnPaperNote(vaultBasePath, ["paper", source].concat(overwrite ? ["--overwrite"] : []), "paper-note.log",
+        "🔬 Nota Studio avviata: testo completo, estrazione con agy e verifica statistica (circa 3-6 minuti). Finirà in Bodybuilding/Studi/.");
+}
+
+// Voce di menu "Integra Studi in una Nota Bodybuilding"
+async function runConceptEvidenceFlow(tp, app, vaultBasePath) {
+    const studiDir = "Bodybuilding/Studi/";
+    const studies = app.vault.getMarkdownFiles().filter(f => f.path.startsWith(studiDir));
+    if (!studies.length) {
+        if (window.Notice) new window.Notice("Nessuna Nota Studio in Bodybuilding/Studi/: creane prima una con «Nota Studio Scientifico».", 7000);
+        return;
+    }
+    const notes = app.vault.getMarkdownFiles().filter(f => !f.path.startsWith(".") && !f.path.startsWith(studiDir)
+        && (f.path.startsWith("Bodybuilding/") || String(app.metadataCache.getFileCache(f)?.frontmatter?.Disciplina || "") === "Bodybuilding"));
+    const activeFile = app.workspace.getActiveFile();
+    notes.sort((a, b) => (activeFile && a.path === activeFile.path ? -1 : activeFile && b.path === activeFile.path ? 1 : a.basename.localeCompare(b.basename)));
+    if (!notes.length) {
+        if (window.Notice) new window.Notice("Nessuna nota di Bodybuilding trovata.", 5000);
+        return;
+    }
+    const target = await tp.system.suggester(
+        notes.map(f => (activeFile && f.path === activeFile.path ? `⭐ [NOTA ATTIVA] ${f.basename}` : `🏋️ ${f.basename}`)),
+        notes, false, "Integra 1/3: In quale nota di Bodybuilding inserisco gli studi?"
+    );
+    if (!target) return;
+    const kind = await tp.system.suggester(
+        ["💪 Muscolo / gruppo muscolare", "🏋️ Esercizio", "📐 Principio di allenamento (volume, ROM, cedimento...)"],
+        ["muscle_group", "exercise", "principle"], false, "Integra 2/3: Che tipo di nota è?"
+    );
+    if (!kind) return;
+    const label = f => {
+        const fm = app.metadataCache.getFileCache(f)?.frontmatter || {};
+        const alias = Array.isArray(fm.aliases) && fm.aliases.length ? fm.aliases[0] : f.basename;
+        const lvl = fm.evidence_level ? ` — evidenza ${fm.evidence_level}` : "";
+        return `${alias}: ${String(fm.title || "").slice(0, 70)}${lvl}`;
+    };
+    const chosen = [];
+    while (true) {
+        const remaining = studies.filter(f => !chosen.includes(f));
+        if (!remaining.length) break;
+        const opts = [{ label: chosen.length ? `✅ Fine (${chosen.length} studi scelti)` : "⏭️ Annulla", value: "done" }]
+            .concat(remaining.map(f => ({ label: `📑 ${label(f)}`, value: f })));
+        const pick = await tp.system.suggester(opts.map(o => o.label), opts.map(o => o.value), false,
+            `Integra 3/3: Aggiungi uno studio (scelti: ${chosen.length})`);
+        if (!pick || pick === "done") break;
+        chosen.push(pick);
+    }
+    if (!chosen.length) return;
+    spawnPaperNote(vaultBasePath, ["concept", target.path, "--kind", kind, "--papers"].concat(chosen.map(f => f.basename)),
+        "concept-evidence.log",
+        `🏋️ Integrazione di ${chosen.length} studi in «${target.basename}» avviata (circa 3-6 minuti). Viene modificato solo il blocco «Evidenza scientifica»; copia di sicurezza in .antigravity/backups.`);
 }
 
 /**
@@ -1994,49 +3144,36 @@ module.exports = async function (tp) {
             }
         }
 
-        // Elenco delle 20 Macro-Discipline del Vault
-        const disciplines = [
-            // Polo #università
-            { name: "Matematica", pole: "università", label: "🎓 Matematica  [Polo #università]" },
-            { name: "Informatica", pole: "università", label: "🎓 Informatica  [Polo #università]" },
-            { name: "Fisica", pole: "università", label: "🎓 Fisica  [Polo #università]" },
-            { name: "Intelligenza Artificiale", pole: "università", label: "🎓 Intelligenza Artificiale  [Polo #università]" },
-            { name: "Neuroscienze", pole: "università", label: "🎓 Neuroscienze  [Polo #università]" },
-            { name: "Biologia", pole: "università", label: "🎓 Biologia  [Polo #università]" },
-
-            // Polo #personale
-            { name: "Bodybuilding", pole: "personale", label: "🏋️ Bodybuilding  [Polo #personale]" },
-            { name: "Nutrizione e Salute", pole: "personale", label: "🥗 Nutrizione e Salute  [Polo #personale]" },
-            { name: "Chimica", pole: "personale", label: "🧪 Chimica  [Polo #personale]" },
-            { name: "Droghe", pole: "personale", label: "💊 Droghe  [Polo #personale]" },
-            { name: "Tecnologia ed Elettronica", pole: "personale", label: "💻 Tecnologia ed Elettronica  [Polo #personale]" },
-            { name: "Musica e Industria Musicale", pole: "personale", label: "🎵 Musica e Industria Musicale  [Polo #personale]" },
-            { name: "Arte e Storia dell'Arte", pole: "personale", label: "🎨 Arte e Storia dell'Arte  [Polo #personale]" },
-            { name: "Filosofia", pole: "personale", label: "🏛️ Filosofia  [Polo #personale]" },
-            { name: "Letteratura", pole: "personale", label: "📚 Letteratura  [Polo #personale]" },
-            { name: "Analisi Narrativa", pole: "personale", label: "✍️ Analisi Narrativa  [Polo #personale]" },
-            { name: "Storia", pole: "personale", label: "📜 Storia  [Polo #personale]" },
-            { name: "Politica e Geopolitica", pole: "personale", label: "🌐 Politica e Geopolitica  [Polo #personale]" },
-            { name: "Economia e Finanza", pole: "personale", label: "📈 Economia e Finanza  [Polo #personale]" },
-            { name: "Psicologia", pole: "personale", label: "🧠 Psicologia  [Polo #personale]" }
+        // Registro condiviso delle materie, con fallback locale se il JSON non è leggibile.
+        const fallbackDisciplines = [
+            {name:"Matematica",pole:"università",emoji:"🎓"},{name:"Informatica",pole:"università",emoji:"🎓"},{name:"Fisica",pole:"università",emoji:"🎓"},{name:"Intelligenza Artificiale",pole:"università",emoji:"🎓"},{name:"Neuroscienze",pole:"università",emoji:"🎓"},{name:"Biologia",pole:"università",emoji:"🎓"},
+            {name:"Bodybuilding",pole:"personale",emoji:"🏋️"},{name:"Nutrizione e Salute",pole:"personale",emoji:"🥗"},{name:"Chimica",pole:"personale",emoji:"🧪"},{name:"Droghe",pole:"personale",emoji:"💊"},{name:"Tecnologia ed Elettronica",pole:"personale",emoji:"💻"},{name:"Musica e Industria Musicale",pole:"personale",emoji:"🎵"},{name:"Arte e Storia dell'Arte",pole:"personale",emoji:"🎨"},{name:"Filosofia",pole:"personale",emoji:"🏛️"},{name:"Letteratura",pole:"personale",emoji:"📚"},{name:"Analisi Narrativa",pole:"personale",emoji:"✍️"},{name:"Storia",pole:"personale",emoji:"📜"},{name:"Politica e Geopolitica",pole:"personale",emoji:"🌐"},{name:"Economia e Finanza",pole:"personale",emoji:"📈"},{name:"Psicologia",pole:"personale",emoji:"🧠"}
         ];
+        let disciplineEntries = fallbackDisciplines;
+        try { const registry = JSON.parse(fs.readFileSync(path.join(vaultBasePath, ".antigravity", "disciplines.json"), "utf8")); if (Array.isArray(registry.disciplines)) disciplineEntries = registry.disciplines; } catch (_) {}
+        const disciplines = disciplineEntries.map(d => ({...d, label: `${d.emoji || "📚"} ${d.name}  [Polo #${d.pole || "personale"}]`}));
 
         // -------------------------------------------------------------
         // STEP 1: Menu a Tendina 1 (Tipo di Operazione)
         // -------------------------------------------------------------
         const operationOptions = [
-            { label: "📝 Crea Nota Normale (Nuova)", value: "normal" },
-            { label: "🗺️ Crea / Aggiorna MOC (Map of Content)", value: "moc" },
-            { label: "🛠️ Modifica / Migliora Nota Esistente", value: "edit" },
-            { label: "🤖 Crea Note in Automatico dal MOC (Batch)", value: "moc_batch" }
+            { group: "Crea", value: "normal", icon: "file-plus", label: "Nuova nota", description: "Una nota da una o più fonti" },
+            { group: "Crea", value: "moc", icon: "map", label: "Crea o aggiorna un MOC", description: "Mappa dei contenuti di un corso o argomento" },
+            { group: "Crea", value: "moc_batch", icon: "layers", label: "Note automatiche dal MOC", description: "Crea in sequenza le note mancanti di un MOC" },
+            { group: "Migliora", value: "edit", icon: "pencil-line", label: "Modifica una nota", description: "Integra, fondi una fonte o riformatta" },
+            { group: "Migliora", value: "correctness", icon: "shield-check", label: "Verifica e correggi", description: "Controlla la correttezza di note, MOC o cartelle" },
+            { group: "Ricerca scientifica", value: "paper_note", icon: "flask-conical", label: "Nota da studio scientifico", description: "Da DOI, PMID o PDF" },
+            { group: "Ricerca scientifica", value: "concept_evidence", icon: "dumbbell", label: "Integra studi in Bodybuilding", description: "Aggiunge evidenze a una nota esistente" }
         ];
 
-        const chosenOp = await tp.system.suggester(
-            operationOptions.map(o => o.label),
-            operationOptions.map(o => o.value),
-            false,
-            "Passo 1/8: Seleziona il Tipo di Operazione"
-        );
+        const chosenOp = await openChoiceModal(app, {
+            tp,
+            title: "Cosa vuoi fare?",
+            step: "Passo 1/8",
+            subtitle: "Antigravity · automazione delle note",
+            layout: "grid",
+            options: operationOptions
+        });
 
         if (!chosenOp) {
             return "";
@@ -2044,6 +3181,21 @@ module.exports = async function (tp) {
 
         if (chosenOp === "moc_batch") {
             await runMocBatchFlow(tp, app, vaultBasePath);
+            return "";
+        }
+
+        if (chosenOp === "paper_note") {
+            await runPaperNoteFlow(tp, app, vaultBasePath);
+            return "";
+        }
+
+        if (chosenOp === "concept_evidence") {
+            await runConceptEvidenceFlow(tp, app, vaultBasePath);
+            return "";
+        }
+
+        if (chosenOp === "correctness") {
+            await runCorrectnessFlow(tp, app, vaultBasePath);
             return "";
         }
 
@@ -2107,12 +3259,21 @@ module.exports = async function (tp) {
             }
 
             if (!chosenDiscipline) {
-                chosenDiscipline = await tp.system.suggester(
-                    disciplines.map(d => d.label),
-                    disciplines,
-                    false,
-                    `Assegna la Disciplina a "${selectedFile.basename}":`
-                );
+                try {
+                    chosenDiscipline = await openDisciplinePickerModal(currentApp, {
+                        title: `Assegna la Disciplina a "${selectedFile.basename}":`,
+                        disciplines: disciplines,
+                        current: null
+                    });
+                } catch (err) {
+                    console.error("openDisciplinePickerModal failed, using fallback:", err);
+                    chosenDiscipline = await tp.system.suggester(
+                        ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
+                        [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
+                        false,
+                        `Assegna la Disciplina a "${selectedFile.basename}":`
+                    );
+                }
                 if (!chosenDiscipline) {
                     return "";
                 }
@@ -2175,7 +3336,8 @@ module.exports = async function (tp) {
                     tp,
                     app,
                     vaultBasePath,
-                    "Passo 4/4: Seleziona la Nuova Fonte da Fondere nella Nota"
+                    "Passo 4/4: Seleziona la Nuova Fonte da Fondere nella Nota",
+                    chosenDiscipline ? chosenDiscipline.name : ""
                 );
                 if (!sourceResult) {
                     return "";
@@ -2210,12 +3372,21 @@ module.exports = async function (tp) {
         // =============================================================
         } else if (chosenOp === "moc") {
             // Passo 2/8: Disciplina
-            chosenDiscipline = await tp.system.suggester(
-                disciplines.map(d => d.label),
-                disciplines,
-                false,
-                "Passo 2/8: Seleziona la Disciplina per il MOC:"
-            );
+            try {
+                chosenDiscipline = await openDisciplinePickerModal(currentApp, {
+                    title: "Passo 2/8: Seleziona la Disciplina per il MOC:",
+                    disciplines: disciplines,
+                    current: null
+                });
+            } catch (err) {
+                console.error("openDisciplinePickerModal failed, using fallback:", err);
+                chosenDiscipline = await tp.system.suggester(
+                    ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
+                    [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
+                    false,
+                    "Passo 2/8: Seleziona la Disciplina per il MOC:"
+                );
+            }
             if (!chosenDiscipline) {
                 return "";
             }
@@ -2361,12 +3532,21 @@ module.exports = async function (tp) {
         // =============================================================
         } else {
             // Passo 2/8: Disciplina
-            chosenDiscipline = await tp.system.suggester(
-                disciplines.map(d => d.label),
-                disciplines,
-                false,
-                "Passo 2/8: Seleziona la Disciplina (Lista Chiusa 20 Materie)"
-            );
+            try {
+                chosenDiscipline = await openDisciplinePickerModal(currentApp, {
+                    title: "Passo 2/8: Seleziona la Disciplina",
+                    disciplines: disciplines,
+                    current: null
+                });
+            } catch (err) {
+                console.error("openDisciplinePickerModal failed, using fallback:", err);
+                chosenDiscipline = await tp.system.suggester(
+                    ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
+                    [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
+                    false,
+                    "Passo 2/8: Seleziona la Disciplina"
+                );
+            }
             if (!chosenDiscipline) {
                 return "";
             }
@@ -2392,7 +3572,8 @@ module.exports = async function (tp) {
                 tp,
                 app,
                 vaultBasePath,
-                "Passo 4/8: Seleziona la Fonte per la Nota Normale"
+                "Passo 4/8: Seleziona la Fonte per la Nota Normale",
+                chosenDiscipline ? chosenDiscipline.name : ""
             );
             if (!sourceResult) {
                 return "";
@@ -2414,7 +3595,7 @@ module.exports = async function (tp) {
             // Unico nome possibile per i MOC: 01 MOC's/<Argomento> MOC.md (lo stesso che usa l'orchestratore)
             targetRelPath = `01 MOC's/${topic.trim()} MOC.md`;
         } else {
-            targetRelPath = `${chosenDiscipline.name}/${topic.trim()}.md`;
+            targetRelPath = chosenDiscipline.name === "__auto__" ? `__auto__/${topic.trim()}.md` : `${chosenDiscipline.name}/${topic.trim()}.md`;
         }
 
         // 1. Pulizia e reset totale dell'ambiente per idempotenza assoluta
@@ -2489,3 +3670,600 @@ module.exports = async function (tp) {
         }, 400);
     }
 };
+
+function openChoiceModal(app, options) {
+    const opts = options || {};
+    const tp = opts.tp;
+    const title = opts.title || "";
+    const step = opts.step || "";
+    const subtitle = opts.subtitle || "";
+    const choices = Array.isArray(opts.options) ? opts.options : [];
+    const withKnowledge = opts.knowledge === true;
+    const isGrid = opts.layout === "grid";
+
+    ensureAgStyle();
+
+    return new Promise(async (resolve) => {
+        let submitted = false;
+        let selectedIndex = 0;
+        let allowBaseKnowledge = false;
+        let modalContainer = null;
+        let handleKeydown = null;
+
+        const cleanup = () => {
+            if (handleKeydown) {
+                document.removeEventListener("keydown", handleKeydown, true);
+            }
+            if (modalContainer && modalContainer.parentNode) {
+                modalContainer.parentNode.removeChild(modalContainer);
+            }
+        };
+
+        try {
+            if (typeof document === "undefined" || !document.createElement) {
+                throw new Error("Ambiente DOM non disponibile");
+            }
+
+            modalContainer = document.createElement("div");
+            modalContainer.className = "modal-container mod-dim ag-picker-backdrop";
+
+            const modalBg = document.createElement("div");
+            modalBg.className = "modal-bg";
+            modalContainer.appendChild(modalBg);
+
+            const modalEl = document.createElement("div");
+            modalEl.className = "modal ag-picker ag-picker-choice-modal";
+            modalEl.setAttribute("role", "dialog");
+            modalEl.setAttribute("aria-modal", "true");
+            modalEl.setAttribute("aria-label", title);
+            modalContainer.appendChild(modalEl);
+
+            // Header
+            const headerEl = document.createElement("div");
+            headerEl.className = "ag-picker-header";
+            const titleRowEl = document.createElement("div");
+            titleRowEl.className = "ag-picker-title-row";
+
+            const titleHeadingEl = document.createElement("h2");
+            titleHeadingEl.className = "ag-picker-title";
+            titleHeadingEl.textContent = title;
+            titleRowEl.appendChild(titleHeadingEl);
+
+            if (step) {
+                const stepChipEl = document.createElement("span");
+                stepChipEl.className = "ag-picker-step-chip";
+                stepChipEl.textContent = step;
+                titleRowEl.appendChild(stepChipEl);
+            }
+            headerEl.appendChild(titleRowEl);
+
+            if (subtitle) {
+                const subtitleEl = document.createElement("p");
+                subtitleEl.className = "ag-picker-subtitle";
+                subtitleEl.textContent = subtitle;
+                headerEl.appendChild(subtitleEl);
+            }
+
+            const closeBtn = document.createElement("button");
+            closeBtn.type = "button";
+            closeBtn.className = "ag-picker-close-btn";
+            closeBtn.setAttribute("aria-label", "Chiudi");
+            closeBtn.setAttribute("title", "Chiudi");
+            closeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+            headerEl.appendChild(closeBtn);
+            modalEl.appendChild(headerEl);
+
+            // Lista Card
+            const listEl = document.createElement("div");
+            listEl.className = isGrid ? "ag-picker-choice-list ag-picker-choice-grid" : "ag-picker-choice-list";
+            listEl.setAttribute("role", "radiogroup");
+            listEl.setAttribute("aria-label", title);
+            modalEl.appendChild(listEl);
+
+            let obs = null;
+            try { obs = require("obsidian"); } catch (_) {}
+            if (!obs && typeof window !== "undefined") obs = window.obsidian;
+            const setIconFn = (obs && typeof obs.setIcon === "function") ? obs.setIcon : null;
+
+            const cardElements = [];
+
+            const submitSelection = (idx) => {
+                if (submitted) return;
+                submitted = true;
+                cleanup();
+                const chosenOpt = choices[idx];
+                const chosenVal = chosenOpt ? chosenOpt.value : null;
+                if (withKnowledge) {
+                    resolve({ value: chosenVal, allowBase: allowBaseKnowledge });
+                } else {
+                    resolve(chosenVal);
+                }
+            };
+
+            const selectCard = (idx, focusEl = true) => {
+                if (idx < 0 || idx >= choices.length) return;
+                selectedIndex = idx;
+                cardElements.forEach((c, i) => {
+                    const isSel = i === idx;
+                    c.setAttribute("aria-checked", isSel ? "true" : "false");
+                    c.setAttribute("tabindex", isSel ? "0" : "-1");
+                    c.classList.toggle("is-selected", isSel);
+                });
+                if (focusEl && cardElements[idx]) {
+                    cardElements[idx].focus();
+                }
+            };
+
+            let currentGroup = null;
+            choices.forEach((opt, idx) => {
+                if (opt.group && opt.group !== currentGroup) {
+                    currentGroup = opt.group;
+                    const groupLabel = document.createElement("div");
+                    groupLabel.className = "ag-picker-section-label";
+                    groupLabel.textContent = opt.group;
+                    listEl.appendChild(groupLabel);
+                } else if (!opt.group) {
+                    currentGroup = null;
+                }
+
+                const card = document.createElement("div");
+                card.className = "ag-picker-choice-card";
+                card.setAttribute("role", "radio");
+                card.setAttribute("tabindex", idx === 0 ? "0" : "-1");
+                card.setAttribute("aria-checked", idx === 0 ? "true" : "false");
+                if (idx === 0) card.classList.add("is-selected");
+
+                const iconBox = document.createElement("div");
+                iconBox.className = "ag-picker-choice-icon";
+                iconBox.setAttribute("aria-hidden", "true");
+                if (opt.icon && setIconFn) {
+                    try { setIconFn(iconBox, opt.icon); } catch (_) {}
+                }
+                card.appendChild(iconBox);
+
+                const contentBox = document.createElement("div");
+                contentBox.className = "ag-picker-choice-content";
+
+                const nameEl = document.createElement("div");
+                nameEl.className = "ag-picker-choice-title";
+                nameEl.textContent = opt.label || "";
+                contentBox.appendChild(nameEl);
+
+                if (opt.description) {
+                    const descEl = document.createElement("div");
+                    descEl.className = "ag-picker-choice-desc";
+                    descEl.textContent = opt.description;
+                    contentBox.appendChild(descEl);
+                }
+                card.appendChild(contentBox);
+
+                card.onclick = () => {
+                    selectCard(idx, false);
+                    if (!withKnowledge) {
+                        submitSelection(idx);
+                    }
+                };
+
+                listEl.appendChild(card);
+                cardElements.push(card);
+            });
+
+            // Sezione Conoscenza (se knowledge: true)
+            if (withKnowledge) {
+                const knowledgeSectionEl = document.createElement("div");
+                knowledgeSectionEl.className = "ag-picker-section ag-picker-choice-knowledge-section";
+                knowledgeSectionEl.innerHTML = `
+                    <div class="ag-picker-section-label">Modalità Conoscenza per NotebookLM</div>
+                    <div class="ag-picker-segmented" role="radiogroup" aria-label="Modalità conoscenza">
+                        <button type="button" class="ag-picker-segment is-selected" role="radio" aria-checked="true">
+                            <span class="ag-picker-seg-title">🔒 1. Solo NotebookLM</span>
+                            <span class="ag-picker-seg-sub">Esclusivo — Zero conoscenza esterna</span>
+                        </button>
+                        <button type="button" class="ag-picker-segment" role="radio" aria-checked="false">
+                            <span class="ag-picker-seg-title">🧠+🌐 2. NotebookLM + AI</span>
+                            <span class="ag-picker-seg-sub">Fonte primaria + Conoscenza interna AI</span>
+                        </button>
+                    </div>
+                `;
+                modalEl.appendChild(knowledgeSectionEl);
+
+                const segButtons = knowledgeSectionEl.querySelectorAll(".ag-picker-segment");
+                segButtons[0].onclick = () => {
+                    allowBaseKnowledge = false;
+                    segButtons[0].classList.add("is-selected");
+                    segButtons[0].setAttribute("aria-checked", "true");
+                    segButtons[1].classList.remove("is-selected");
+                    segButtons[1].setAttribute("aria-checked", "false");
+                };
+                segButtons[1].onclick = () => {
+                    allowBaseKnowledge = true;
+                    segButtons[1].classList.add("is-selected");
+                    segButtons[1].setAttribute("aria-checked", "true");
+                    segButtons[0].classList.remove("is-selected");
+                    segButtons[0].setAttribute("aria-checked", "false");
+                };
+            }
+
+            // Footer
+            const footerEl = document.createElement("div");
+            footerEl.className = "ag-picker-footer";
+            if (withKnowledge) {
+                footerEl.innerHTML = `
+                    <div class="ag-picker-summary" aria-live="polite"></div>
+                    <div class="ag-picker-footer-buttons">
+                        <button type="button" class="ag-picker-btn ag-picker-btn-cancel">Annulla</button>
+                        <button type="button" class="ag-picker-btn mod-cta ag-picker-btn-confirm">Avvia</button>
+                    </div>
+                `;
+            } else {
+                footerEl.innerHTML = `
+                    <div class="ag-picker-summary" aria-live="polite"></div>
+                    <div class="ag-picker-footer-buttons" style="margin-left: auto;">
+                        <button type="button" class="ag-picker-btn ag-picker-btn-cancel">Annulla</button>
+                    </div>
+                `;
+            }
+            modalEl.appendChild(footerEl);
+
+            const cancelBtn = footerEl.querySelector(".ag-picker-btn-cancel");
+            const confirmBtn = footerEl.querySelector(".ag-picker-btn-confirm");
+
+            if (confirmBtn) {
+                confirmBtn.onclick = () => submitSelection(selectedIndex);
+            }
+
+            const cancelModal = () => {
+                cleanup();
+                if (!submitted) {
+                    submitted = true;
+                    resolve(null);
+                }
+            };
+
+            cancelBtn.onclick = cancelModal;
+            closeBtn.onclick = cancelModal;
+            modalBg.onclick = cancelModal;
+
+            handleKeydown = (e) => {
+                if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancelModal();
+                    return;
+                }
+
+                if (choices.length === 0) return;
+
+                if (isGrid) {
+                    if (e.key === "ArrowRight") {
+                        e.preventDefault();
+                        selectCard((selectedIndex + 1) % choices.length, true);
+                    } else if (e.key === "ArrowLeft") {
+                        e.preventDefault();
+                        selectCard((selectedIndex - 1 + choices.length) % choices.length, true);
+                    } else if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        selectCard((selectedIndex + 2) % choices.length, true);
+                    } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        selectCard((selectedIndex - 2 + choices.length * 2) % choices.length, true);
+                    } else if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitSelection(selectedIndex);
+                    }
+                } else {
+                    if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        selectCard((selectedIndex + 1) % choices.length, true);
+                    } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        selectCard((selectedIndex - 1 + choices.length) % choices.length, true);
+                    } else if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitSelection(selectedIndex);
+                    }
+                }
+            };
+
+            document.addEventListener("keydown", handleKeydown, true);
+            document.body.appendChild(modalContainer);
+            setTimeout(() => {
+                if (cardElements[0]) cardElements[0].focus();
+            }, 60);
+
+        } catch (err) {
+            console.warn("[Antigravity] Errore apertura openChoiceModal, uso fallback suggester:", err);
+            cleanup();
+            if (tp && tp.system && typeof tp.system.suggester === "function") {
+                try {
+                    const labels = choices.map(o => o.label + (o.description ? ` (${o.description})` : ""));
+                    const values = choices.map(o => o.value);
+                    const chosen = await tp.system.suggester(labels, values, false, title);
+                    if (chosen === null || chosen === undefined) {
+                        resolve(null);
+                        return;
+                    }
+                    if (withKnowledge) {
+                        const allowBase = await promptKnowledgeMode(tp);
+                        if (allowBase === null || allowBase === undefined) {
+                            resolve(null);
+                            return;
+                        }
+                        resolve({ value: chosen, allowBase });
+                    } else {
+                        resolve(chosen);
+                    }
+                } catch (fallbackErr) {
+                    resolve(null);
+                }
+            } else {
+                resolve(null);
+            }
+        }
+    });
+}
+
+// Usati dalla barra del tutor (Scripts/tutor_bar.js)
+/**
+ * Dalla barra del tutor: le note di una lezione da creare o completare, con i valori già compilati dal tutor
+ * (titolo, cartella, diario, NotebookLM del corso). Prima di partire si scelgono le fonti, la modalità
+ * di conoscenza e, per le modifiche, il tipo di modifica e le istruzioni.
+ */
+async function runTutorFlow(tp, app, vaultBasePath, pre) {
+    const nbNames = nbs => nbs.map(n => n.title || n.id).join(", ");
+    const pickSources = async (current, allowOther, headline) => {
+        const opts = [];
+        if (current.length) {
+            opts.push({
+                icon: "brain",
+                label: `NotebookLM del corso: ${nbNames(current)}`,
+                description: "Usa le fonti NotebookLM collegate a questo corso",
+                value: "course"
+            });
+        }
+        opts.push({
+            icon: "library",
+            label: "Scegli altri NotebookLM",
+            description: "Cerca o seleziona altri notebook",
+            value: "nlm"
+        });
+        if (allowOther) {
+            opts.push({
+                icon: "folder-open",
+                label: "Un'altra fonte",
+                description: "YouTube, sito web o file locali",
+                value: "other"
+            });
+        }
+        return openChoiceModal(app, {
+            title: headline,
+            step: "Tutor 2/3",
+            options: opts,
+            knowledge: current.length > 0,
+            tp
+        });
+    };
+    const nlmSource = (details, allowBase) => ({
+        type: "notebooklm",
+        label: details.length === 1 ? `NotebookLM: ${details[0].title}` : `NotebookLM Multiplo (${details.length} fonti: ${nbNames(details)})`,
+        value: details, notebooks: details.map(d => d.id), notebook_details: details, allow_base_knowledge: allowBase
+    });
+    const withSource = (job, source) => {
+        const isNlm = source.type === "notebooklm";
+        const details = isNlm ? source.notebook_details : [];
+        return Object.assign(job, {
+            source, allow_base_knowledge: isNlm ? source.allow_base_knowledge === true : true,
+            notebooks: details.map(d => d.id), notebook_details: details,
+            notebook_id: details.length ? details[0].id : null, notebook_title: isNlm ? source.label : null
+        });
+    };
+    const startJob = job => {
+        job.timestamp = new Date().toISOString();
+        job.status = "pending";
+        preRunCleanup(vaultBasePath, job.target_file_path);
+        fs.writeFileSync(path.join(getRuntimeDir(), "current-job.json"), JSON.stringify(job, null, 2), "utf8");
+        runGitBackupSnapshot(vaultBasePath);
+        launchBackgroundJob(app, vaultBasePath, job);
+    };
+    const askNotebooks = async headline => {
+        const nlm = await selectNotebookLMInteractive(tp, headline, vaultBasePath, false);
+        return nlm && nlm.notebook_details && nlm.notebook_details.length ? nlm.notebook_details : null;
+    };
+
+    if (pre.kind === "create") {
+        const cfg = pre.cfg;
+        let notes = cfg.notes;
+        if (notes.length > 1) {
+            const opts = [
+                {
+                    icon: "list-checks",
+                    label: `Tutte le ${notes.length} note`,
+                    description: notes.map(n => n.title).join(", "),
+                    value: notes
+                },
+                ...notes.map(n => ({
+                    icon: "file-text",
+                    label: `Solo «${n.title}»`,
+                    description: n.title,
+                    value: [n]
+                }))
+            ];
+            notes = await openChoiceModal(app, {
+                title: `Quali note creare per la lezione del ${pre.date}?`,
+                step: "Tutor 1/3",
+                options: opts,
+                tp
+            });
+            if (!notes) return;
+        }
+        const current = (notes[0].notebooks || []);
+        const pickRes = await pickSources(current, notes.length === 1, "Da quali fonti?");
+        if (!pickRes) return;
+        const choice = (typeof pickRes === "object" && pickRes !== null && "value" in pickRes) ? pickRes.value : pickRes;
+        let allowBase = (typeof pickRes === "object" && pickRes !== null && "allowBase" in pickRes) ? pickRes.allowBase : false;
+
+        if (choice === "other") {
+            const source = await selectSourceInteractive(tp, app, vaultBasePath, "Tutor 3/3: Scegli la fonte");
+            if (!source) return;
+            const n = notes[0];
+            const discipline = cfg.discipline;
+            let pole = "personale";
+            try {
+                const rawDisc = fs.readFileSync(path.join(vaultBasePath, ".antigravity", "disciplines.json"), "utf8");
+                const parsedDisc = JSON.parse(rawDisc);
+                const list = Array.isArray(parsedDisc) ? parsedDisc : (parsedDisc?.disciplines || []);
+                const match = list.find(d => d.name === discipline);
+                if (match && match.pole) {
+                    pole = match.pole;
+                } else {
+                    pole = ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia"].includes(discipline) ? "università" : "personale";
+                }
+            } catch (_) {
+                pole = ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia"].includes(discipline) ? "università" : "personale";
+            }
+            startJob(withSource({
+                operation: "normal", operation_type: "normal", operation_label: "Nota Normale (Nuova)", moc_mode: null,
+                syllabus_text: "", syllabus_files: [], syllabus_diary_text: n.diary || "", lessons: n.lessons || [],
+                target_file_path: n.target_file_path, target_file_abs: path.join(vaultBasePath, n.target_file_path),
+                title: n.title, topic: n.title, edit_mode: null, user_instructions: "", layout_moc: cfg.moc || "",
+                discipline, disciplina: discipline,
+                pole
+            }, source));
+            return;
+        }
+        let details = current;
+        if (choice === "nlm") {
+            details = await askNotebooks("Tutor 2/3: Scegli i NotebookLM");
+            if (!details) return;
+            const confirmRes = await openChoiceModal(app, {
+                title: "Conferma NotebookLM",
+                step: "Tutor 2/3",
+                subtitle: "Verifica le fonti selezionate e scegli la modalità di conoscenza",
+                options: [{
+                    icon: "brain",
+                    label: details.length === 1 ? `NotebookLM: ${details[0].title}` : `${details.length} NotebookLM selezionati`,
+                    description: nbNames(details),
+                    value: details
+                }],
+                knowledge: true,
+                tp
+            });
+            if (!confirmRes) return;
+            allowBase = confirmRes.allowBase;
+        }
+        const picked = details.map(d => ({ id: d.id, title: d.title }));
+        launchBatch(app, vaultBasePath, Object.assign({}, cfg, {
+            allow_base_knowledge: allowBase,
+            notes: notes.map(n => Object.assign({}, n, { notebooks: picked }))
+        }));
+        return;
+    }
+
+    // Completamento di una nota esistente
+    const job = pre.job;
+    const modes = [
+        {
+            icon: "pencil",
+            label: "Integra quanto fatto a lezione",
+            description: "Istruzioni del tutor, modificabili",
+            value: "surgical_prompt"
+        },
+        {
+            icon: "git-merge",
+            label: "Fondi una nuova fonte nella nota",
+            description: "Aggiungi materiale da YouTube, web o file locali",
+            value: "merge_source"
+        },
+        {
+            icon: "sparkles",
+            label: "Riformatta allo standard della disciplina",
+            description: "Adeguamento struttura e stile al MOC",
+            value: "reformat_standard"
+        }
+    ];
+    const mode = await openChoiceModal(app, {
+        title: `Come completare «${job.title}»?`,
+        step: "Tutor 1/3",
+        options: modes,
+        tp
+    });
+    if (!mode) return;
+    let instructions = null;
+    try {
+        instructions = await tp.system.prompt("Tutor 2/3: Istruzioni (già compilate dal tutor, modificale se vuoi)", job.user_instructions || "", true, true);
+    } catch (_) {
+        return;
+    }
+    job.edit_mode = mode;
+    job.user_instructions = (instructions || "").trim();
+    if (mode === "merge_source") {
+        const source = await selectSourceInteractive(tp, app, vaultBasePath, "Tutor 3/3: La fonte da fondere nella nota");
+        if (!source) return;
+        startJob(withSource(job, source));
+        return;
+    }
+    const current = job.notebook_details || [];
+    const compSourceOpts = [];
+    if (current.length) {
+        compSourceOpts.push({
+            icon: "brain",
+            label: `NotebookLM del corso: ${nbNames(current)}`,
+            description: "Usa le fonti NotebookLM collegate a questo corso",
+            value: "course"
+        });
+    }
+    compSourceOpts.push({
+        icon: "library",
+        label: "Scegli altri NotebookLM",
+        description: "Cerca o seleziona altri notebook",
+        value: "nlm"
+    });
+    compSourceOpts.push({
+        icon: "file-x",
+        label: "Nessuna fonte esterna",
+        description: "Solo la nota e il diario",
+        value: "none"
+    });
+    const compPickRes = await openChoiceModal(app, {
+        title: "Da quali fonti?",
+        step: "Tutor 3/3",
+        options: compSourceOpts,
+        knowledge: current.length > 0,
+        tp
+    });
+    if (!compPickRes) return;
+    const choice = (typeof compPickRes === "object" && compPickRes !== null && "value" in compPickRes) ? compPickRes.value : compPickRes;
+    let allowBase = (typeof compPickRes === "object" && compPickRes !== null && "allowBase" in compPickRes) ? compPickRes.allowBase : false;
+
+    if (choice === "none") {
+        startJob(withSource(job, { type: "vault_file", label: job.title, value: job.target_file_path }));
+        return;
+    }
+    let details = current;
+    if (choice === "nlm") {
+        details = await askNotebooks("Tutor 3/3: Scegli i NotebookLM");
+        if (!details) return;
+        const confirmRes = await openChoiceModal(app, {
+            title: "Conferma NotebookLM",
+            step: "Tutor 3/3",
+            subtitle: "Verifica le fonti selezionate e scegli la modalità di conoscenza",
+            options: [{
+                icon: "brain",
+                label: details.length === 1 ? `NotebookLM: ${details[0].title}` : `${details.length} NotebookLM selezionati`,
+                description: nbNames(details),
+                value: details
+            }],
+            knowledge: true,
+            tp
+        });
+        if (!confirmRes) return;
+        allowBase = confirmRes.allowBase;
+    }
+    startJob(withSource(job, nlmSource(details, allowBase)));
+}
+
+module.exports.launchBatch = launchBatch;
+module.exports.launchJob = launchBackgroundJob;
+module.exports.runTutorFlow = runTutorFlow;
+module.exports.openChoiceModal = openChoiceModal;
+

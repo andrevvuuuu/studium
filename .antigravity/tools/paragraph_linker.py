@@ -544,8 +544,32 @@ def recommend_links(
             sec_copy["score"] = total_score
             scored_sections.append((total_score, sec_copy))
 
-    scored_sections.sort(key=lambda x: x[0], reverse=True)
-    selected_sections = [s[1] for s in scored_sections[:top_sections]]
+    salient = {t for t in exact_match_terms if len(t) > 2}
+    affinity_min_terms = 2 if len(salient) >= 2 else 1
+    def affinity_filter(scored, threshold, limit):
+        if not scored:
+            return []
+        best = max(score for score, _ in scored)
+        kept = []
+        for score, item in sorted(scored, key=lambda pair: pair[0], reverse=True):
+            if score < threshold * best:
+                continue
+            text_tokens = set(item.get("tokens", []))
+            heading = (item.get("heading_exact") or item.get("title") or item.get("note_title") or "")
+            heading_tokens = set(tokenize(heading))
+            if salient and len(salient.intersection(text_tokens | heading_tokens)) < affinity_min_terms:
+                continue
+            item_disc = str(item.get("disciplina", "")).lower()
+            cross_discipline = bool(item_disc and disc_lower and not (disc_lower in item_disc or item_disc in disc_lower))
+            if cross_discipline and score < 0.7 * best:
+                continue
+            kept.append((score, item))
+            if len(kept) >= limit:
+                break
+        return kept
+
+    scored_sections = affinity_filter(scored_sections, 0.45, top_sections)
+    selected_sections = [s[1] for s in scored_sections]
 
     # -------------------------------------------------------------
     # B. RANKING LIVELLO 3: SINGOLI CALLOUT E BLOCCHI (^id-blocco)
@@ -592,8 +616,8 @@ def recommend_links(
             blk_copy["score"] = total_score
             scored_blocks.append((total_score, blk_copy))
 
-    scored_blocks.sort(key=lambda x: x[0], reverse=True)
-    selected_blocks = [b[1] for b in scored_blocks[:top_blocks]]
+    scored_blocks = affinity_filter(scored_blocks, 0.45, top_blocks)
+    selected_blocks = [b[1] for b in scored_blocks]
 
     # -------------------------------------------------------------
     # C. RANKING LIVELLO 1: NOTE INTERE E MOC
@@ -636,8 +660,8 @@ def recommend_links(
             n_copy["score"] = total_score
             scored_notes.append((total_score, n_copy))
 
-    scored_notes.sort(key=lambda x: x[0], reverse=True)
-    selected_notes = [n[1] for n in scored_notes[:top_notes]]
+    scored_notes = affinity_filter(scored_notes, 0.45, top_notes)
+    selected_notes = [n[1] for n in scored_notes]
 
     # -------------------------------------------------------------
     # D. SELEZIONE DEI 10 PASSAGGI CHIAVE PER CONFLITTI EPISTEMICI
@@ -700,6 +724,8 @@ def generate_recommended_links_markdown(
         "a tre livelli di granularità (Sottoparagrafi specifici, Singoli Callout/Blocchi semantici, Note intere e MOC). "
         "Usa questi collegamenti esatti all'interno del testo della nota per creare un grafo di conoscenza chirurgico ad altissima precisione.\n"
     )
+    if not sections and not blocks and not notes:
+        lines.append("Nessun collegamento con affinità concettuale reale: non inserire link forzati.\n")
 
     # -------------------------------------------------------------
     # TABELLA A: SOTTOPARAGRAFI SPECIFICI

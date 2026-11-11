@@ -1,0 +1,9 @@
+[
+  {"id": "algebra", "nome": "Algebra", "moc": "01 MOC's/Algebra Lineare MOC.md", "start_year": 2026,
+   "fonte": {"tipo": "malvenuto_site", "url": "https://sites.google.com/uniroma1.it/claudia-malvenuto/didattica/algebra-smia-26-27"},
+   "orario": [{"giorno": "lun", "ora": "10:00"}, {"giorno": "mar", "ora": "10:00"}, {"giorno": "mer", "ora": "14:00"}, {"giorno": "ven", "ora": "11:00"}],
+   "esami": [{"nome": "Prima prova in itinere", "data": "2026-11-19"}]},
+  {"id": "analisi", "nome": "Analisi", "moc": "01 MOC's/Analisi 1 MOC.md", "start_year": 2026,
+   "fonte": {"tipo": "gmail_forum", "forum": "Diario delle lezioni", "corso": "Analisi Matematica I"},
+   "orario": [], "esami": [{"nome": "Primo esonero", "data": "2026-11-13"}]}
+]

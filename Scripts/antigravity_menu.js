@@ -191,6 +191,11 @@ async function getNotebookLMList(vaultBasePath) {
     });
 }
 
+function getNotebookLMListFast(vaultBasePath) {
+    const cached = getLocalNotebooksCache(vaultBasePath);
+    return { cached: Array.isArray(cached) ? cached : [], fresh: getNotebookLMList(vaultBasePath) };
+}
+
 // Helper ASINCRONO: Selettore file multiplo nativo macOS con AppleScript non bloccante
 async function pickLocalFilesWithAppleScript() {
     const appleScript = [
@@ -1686,6 +1691,7 @@ function openSourcePickerModal(app, options) {
 
                 const listContainer = document.createElement("div");
                 listContainer.className = "ag-picker-notebook-list";
+                let notebooksLoading = !validNotebooks.length && !!opts.notebooksPromise;
                 contextualEl.appendChild(listContainer);
 
                 const manualRow = document.createElement("div");
@@ -1722,7 +1728,15 @@ function openSourcePickerModal(app, options) {
                 };
 
                 const renderNotebookList = () => {
+                    if (!modalContainer.isConnected) return;
                     listContainer.innerHTML = "";
+                    if (notebooksLoading) {
+                        listContainer.setAttribute("aria-busy", "true");
+                        listContainer.setAttribute("aria-label", "Caricamento dei notebook…");
+                        listContainer.innerHTML = '<span class="ag-picker-sr-only">Caricamento dei notebook…</span>' + Array.from({ length: 4 }, () => '<div class="ag-picker-skeleton" style="padding: 10px; margin: 4px 0;"><div style="height: 12px; border-radius: 4px; background: var(--background-modifier-hover);"></div><div style="height: 12px; border-radius: 4px; background: var(--background-modifier-hover); margin-top: 6px; width: 55%;"></div></div>').join("");
+                        return;
+                    }
+                    listContainer.removeAttribute("aria-busy");
                     const count = selectedNotebooks.length;
                     counterEl.textContent = count === 0
                         ? "Nessun notebook selezionato"
@@ -1787,6 +1801,30 @@ function openSourcePickerModal(app, options) {
                 };
 
                 renderNotebookList();
+                if (opts.notebooksPromise) {
+                    const hadCached = validNotebooks.length > 0;
+                    opts.notebooksPromise.then((fresh) => {
+                        if (!modalContainer.isConnected) return;
+                        const merged = new Map();
+                        for (const nb of [...(Array.isArray(fresh) ? fresh : []), ...validNotebooks, ...selectedNotebooks]) {
+                            if (nb && nb.id && !merged.has(nb.id)) merged.set(nb.id, nb);
+                        }
+                        validNotebooks.splice(0, validNotebooks.length, ...merged.values());
+                        notebooksLoading = false;
+                        renderNotebookList();
+                        updateSummary();
+                    }).catch(() => {
+                        if (!modalContainer.isConnected) return;
+                        notebooksLoading = false;
+                        if (!hadCached) {
+                            renderNotebookList();
+                            const error = document.createElement("div");
+                            error.className = "ag-picker-muted-hint";
+                            error.textContent = "Aggiornamento dei notebook non riuscito.";
+                            listContainer.appendChild(error);
+                        }
+                    });
+                }
 
             } else if (activeType === "youtube") {
                 const wrap = document.createElement("div");
@@ -2285,7 +2323,7 @@ async function legacySelectNotebookLMInteractive(tp, promptHeadline = "Seleziona
 async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Passo 4/8: Seleziona la Fonte:", discipline = "") {
     try {
         const currentApp = app || (typeof tp !== "undefined" && tp?.app) || (typeof window !== "undefined" && window.app);
-        const notebooks = await getNotebookLMList(vaultBasePath);
+        const { cached: notebooks, fresh: notebooksPromise } = getNotebookLMListFast(vaultBasePath);
         const stepMatch = (promptTitle || "").match(/(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+/i);
         const step = stepMatch ? stepMatch[0] : "";
         const cleanTitle = (promptTitle || "").replace(/^(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+:\s*/i, "").replace(/:$/, "").trim();
@@ -2296,6 +2334,7 @@ async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Pa
             discipline: discipline,
             vaultBasePath: vaultBasePath,
             notebooks: notebooks,
+            notebooksPromise: notebooksPromise,
             preselectedKnowledge: null,
             allowedTypes: null
         });
@@ -2332,7 +2371,7 @@ async function promptKnowledgeMode(tp) {
 async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona NotebookLM:", vaultBasePath = "", preselectedKnowledge = null) {
     try {
         const currentApp = (typeof tp !== "undefined" && tp?.app) || (typeof window !== "undefined" && window.app);
-        const notebooks = await getNotebookLMList(vaultBasePath);
+        const { cached: notebooks, fresh: notebooksPromise } = getNotebookLMListFast(vaultBasePath);
         const stepMatch = (promptHeadline || "").match(/(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+/i);
         const step = stepMatch ? stepMatch[0] : "";
         const cleanTitle = (promptHeadline || "").replace(/^(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+:\s*/i, "").replace(/:$/, "").trim();
@@ -2343,6 +2382,7 @@ async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona Noteb
             discipline: "",
             vaultBasePath: vaultBasePath,
             notebooks: notebooks,
+            notebooksPromise: notebooksPromise,
             preselectedKnowledge: preselectedKnowledge,
             allowedTypes: ["notebooklm"]
         });

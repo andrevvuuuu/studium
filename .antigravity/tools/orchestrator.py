@@ -119,7 +119,8 @@ def load_disciplines(vault_root: Path) -> List[dict]:
             return entries
     except Exception:
         pass
-    return [{"name": name, "slug": slug, "pole": "personale", "emoji": "", "aliases": _FALLBACK_DISCIPLINE_ALIASES.get(name, [])} for name, slug in _FALLBACK_DISCIPLINE_SLUG_MAP.items()]
+    universities = {"Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia"}
+    return [{"name": name, "slug": slug, "pole": "università" if name in universities else "personale", "emoji": "", "aliases": _FALLBACK_DISCIPLINE_ALIASES.get(name, [])} for name, slug in _FALLBACK_DISCIPLINE_SLUG_MAP.items()]
 
 def register_discipline(vault_root: Path, entry: dict) -> None:
     """Aggiunge o aggiorna una disciplina con sostituzione atomica del registro."""
@@ -4429,7 +4430,17 @@ def _ascii_slug(name: str) -> str:
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", value)).strip("-") or "disciplina"
 
 def create_discipline_scaffold(vault_root: Path, name: str, pole: str, emoji: str) -> dict:
+    name = re.sub(r'[\\/:*?"<>|]', "", str(name))
+    name = re.sub(r"\s+", " ", name).strip().lstrip(".")[:60].strip()
+    if not name:
+        raise ValueError("Nome materia vuoto dopo la sanificazione")
+    pole = pole if pole in {"università", "personale"} else "personale"
+    entries = load_disciplines(vault_root)
     slug = _ascii_slug(name)
+    normalized = name.casefold()
+    existing = next((e for e in entries if str(e.get("name", "")).casefold() == normalized or e.get("slug") == slug), None)
+    if existing:
+        return existing
     entry = {"name": name, "slug": slug, "pole": pole, "emoji": emoji or "📚", "aliases": []}
     profile_dir = vault_root / ".antigravity" / "disciplines"
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -4469,7 +4480,8 @@ def resolve_auto_discipline(vault_root: Path, job_data: dict) -> dict:
     entry = None
     if result:
         match = result.get("match")
-        entry = next((e for e in entries if e["name"].lower() == str(match or "").strip().lower()), None)
+        normalize_match = lambda value: " ".join(str(value or "").split()).casefold()
+        entry = next((e for e in entries if normalize_match(e["name"]) == normalize_match(match)), None)
         if not entry and result.get("new_name"):
             name = str(result["new_name"]).strip()
             if name: entry = create_discipline_scaffold(vault_root, name, result.get("pole", "personale"), result.get("emoji", "📚"))
@@ -4481,11 +4493,6 @@ def resolve_auto_discipline(vault_root: Path, job_data: dict) -> dict:
     name = entry["name"]
     for key in ("discipline", "disciplina"): job_data[key] = name
     job_data["pole"] = entry.get("pole", "personale")
-    def replace(v):
-        if isinstance(v, str): return v.replace("__auto__", name) if v.startswith("__auto__/") else v
-        if isinstance(v, list): return [replace(x) for x in v]
-        if isinstance(v, dict): return {k:replace(x) for k,x in v.items()}
-        return v
     return entry
 
 def main() -> int:

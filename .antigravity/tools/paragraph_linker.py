@@ -545,6 +545,7 @@ def recommend_links(
             scored_sections.append((total_score, sec_copy))
 
     salient = {t for t in exact_match_terms if len(t) > 2}
+    affinity_min_terms = 2 if len(salient) >= 2 else 1
     def affinity_filter(scored, threshold, limit):
         if not scored:
             return []
@@ -556,7 +557,7 @@ def recommend_links(
             text_tokens = set(item.get("tokens", []))
             heading = (item.get("heading_exact") or item.get("title") or item.get("note_title") or "")
             heading_tokens = set(tokenize(heading))
-            if len(salient.intersection(text_tokens | heading_tokens)) < 2:
+            if salient and len(salient.intersection(text_tokens | heading_tokens)) < affinity_min_terms:
                 continue
             item_disc = str(item.get("disciplina", "")).lower()
             cross_discipline = bool(item_disc and disc_lower and not (disc_lower in item_disc or item_disc in disc_lower))

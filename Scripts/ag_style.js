@@ -828,6 +828,89 @@ module.exports = function injectAgStyle() {
                 opacity: 0.45;
             }
         }
+        /* Regole Selettore Scelte Tutor (.ag-picker-choice) */
+        .ag-picker-choice-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: min(48vh, 380px);
+            overflow-y: auto;
+            scrollbar-gutter: stable;
+            padding: 2px;
+        }
+        .ag-picker-choice-card {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 14px;
+            border-radius: var(--radius-m);
+            border: 1px solid var(--background-modifier-border);
+            background: var(--background-secondary);
+            cursor: pointer;
+            text-align: left;
+            user-select: none;
+            box-sizing: border-box;
+            transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+        }
+        .ag-picker-choice-card:hover {
+            background: var(--background-modifier-hover);
+            border-color: var(--background-modifier-border-hover);
+        }
+        .ag-picker-choice-card:focus-visible {
+            outline: 2px solid var(--interactive-accent);
+            outline-offset: 2px;
+        }
+        .ag-picker-choice-card.is-selected,
+        .ag-picker-choice-card[aria-checked="true"] {
+            border-color: var(--interactive-accent);
+            background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+            box-shadow: var(--shadow-s);
+        }
+        .ag-picker-choice-card:disabled,
+        .ag-picker-choice-card[aria-disabled="true"] {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .ag-picker-choice-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: var(--radius-m);
+            background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+            color: var(--interactive-accent);
+            display: grid;
+            place-items: center;
+            flex-shrink: 0;
+            font-size: 16px;
+            line-height: 1;
+        }
+        .ag-picker-choice-icon svg {
+            width: 18px;
+            height: 18px;
+            stroke-width: 2;
+        }
+        .ag-picker-choice-content {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        .ag-picker-choice-title {
+            font-size: var(--font-ui-medium);
+            font-weight: var(--font-semibold);
+            color: var(--text-normal);
+        }
+        .ag-picker-choice-desc {
+            font-size: var(--font-ui-small);
+            color: var(--text-muted);
+            line-height: 1.3;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: normal;
+        }
+        .ag-picker-choice-knowledge-section {
+            margin-top: 4px;
+        }
         @media (max-width: 600px) {
             .modal.ag-picker {
                 padding: 16px;

@@ -166,7 +166,7 @@ function createTutorViewClass(obsidianApi) {
 
         getViewType() { return VIEW_TYPE_TUTOR; }
         getDisplayText() { return "Tutor delle lezioni"; }
-        getIcon() { return TUTOR_ICON_ID; }
+        getIcon() { return "graduation-cap"; }
 
         async onOpen() {
             try { require(path.join(this.vaultBasePath, "Scripts", "ag_style.js"))(); } catch (_) {}
@@ -208,7 +208,25 @@ function createTutorViewClass(obsidianApi) {
             // Intestazione HUD
             const head = el("div", "ag-hud-head");
             const heading = el("div", "ag-hud-heading");
-            heading.appendChild(el("div", "ag-hud-title", v.mode === "recupero" ? "Recupero delle lezioni" : "Tutor delle lezioni"));
+            const titleEl = el("div", "ag-hud-title");
+            titleEl.style.display = "flex";
+            titleEl.style.alignItems = "center";
+            titleEl.style.gap = "8px";
+
+            try {
+                let obs = null;
+                try { obs = require("obsidian"); } catch (_) {}
+                if (!obs && typeof window !== "undefined") obs = window.obsidian;
+                if (obs && typeof obs.setIcon === "function") {
+                    const iconSpan = el("span", "ag-tutor-head-icon");
+                    iconSpan.setAttribute("aria-hidden", "true");
+                    obs.setIcon(iconSpan, "graduation-cap");
+                    titleEl.appendChild(iconSpan);
+                }
+            } catch (_) {}
+
+            titleEl.appendChild(el("span", "", v.mode === "recupero" ? "Recupero delle lezioni" : "Tutor delle lezioni"));
+            heading.appendChild(titleEl);
             heading.appendChild(el("div", "ag-hud-sub", "Sincronizzazione corsi universitari"));
             head.appendChild(heading);
 

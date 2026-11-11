@@ -3669,6 +3669,305 @@ module.exports = async function (tp) {
     }
 };
 
+function openChoiceModal(app, options) {
+    const opts = options || {};
+    const tp = opts.tp;
+    const title = opts.title || "";
+    const step = opts.step || "";
+    const subtitle = opts.subtitle || "";
+    const choices = Array.isArray(opts.options) ? opts.options : [];
+    const withKnowledge = opts.knowledge === true;
+
+    ensureAgStyle();
+
+    return new Promise(async (resolve) => {
+        let submitted = false;
+        let selectedIndex = 0;
+        let allowBaseKnowledge = false;
+        let modalContainer = null;
+        let handleKeydown = null;
+
+        const cleanup = () => {
+            if (handleKeydown) {
+                document.removeEventListener("keydown", handleKeydown, true);
+            }
+            if (modalContainer && modalContainer.parentNode) {
+                modalContainer.parentNode.removeChild(modalContainer);
+            }
+        };
+
+        try {
+            if (typeof document === "undefined" || !document.createElement) {
+                throw new Error("Ambiente DOM non disponibile");
+            }
+
+            modalContainer = document.createElement("div");
+            modalContainer.className = "modal-container mod-dim ag-picker-backdrop";
+
+            const modalBg = document.createElement("div");
+            modalBg.className = "modal-bg";
+            modalContainer.appendChild(modalBg);
+
+            const modalEl = document.createElement("div");
+            modalEl.className = "modal ag-picker ag-picker-choice-modal";
+            modalEl.setAttribute("role", "dialog");
+            modalEl.setAttribute("aria-modal", "true");
+            modalEl.setAttribute("aria-label", title);
+            modalContainer.appendChild(modalEl);
+
+            // Header
+            const headerEl = document.createElement("div");
+            headerEl.className = "ag-picker-header";
+            const titleRowEl = document.createElement("div");
+            titleRowEl.className = "ag-picker-title-row";
+
+            const titleHeadingEl = document.createElement("h2");
+            titleHeadingEl.className = "ag-picker-title";
+            titleHeadingEl.textContent = title;
+            titleRowEl.appendChild(titleHeadingEl);
+
+            if (step) {
+                const stepChipEl = document.createElement("span");
+                stepChipEl.className = "ag-picker-step-chip";
+                stepChipEl.textContent = step;
+                titleRowEl.appendChild(stepChipEl);
+            }
+            headerEl.appendChild(titleRowEl);
+
+            if (subtitle) {
+                const subtitleEl = document.createElement("p");
+                subtitleEl.className = "ag-picker-subtitle";
+                subtitleEl.textContent = subtitle;
+                headerEl.appendChild(subtitleEl);
+            }
+
+            const closeBtn = document.createElement("button");
+            closeBtn.type = "button";
+            closeBtn.className = "ag-picker-close-btn";
+            closeBtn.setAttribute("aria-label", "Chiudi");
+            closeBtn.setAttribute("title", "Chiudi");
+            closeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+            headerEl.appendChild(closeBtn);
+            modalEl.appendChild(headerEl);
+
+            // Lista Card
+            const listEl = document.createElement("div");
+            listEl.className = "ag-picker-choice-list";
+            listEl.setAttribute("role", "radiogroup");
+            listEl.setAttribute("aria-label", title);
+            modalEl.appendChild(listEl);
+
+            let obs = null;
+            try { obs = require("obsidian"); } catch (_) {}
+            if (!obs && typeof window !== "undefined") obs = window.obsidian;
+            const setIconFn = (obs && typeof obs.setIcon === "function") ? obs.setIcon : null;
+
+            const cardElements = [];
+
+            const submitSelection = (idx) => {
+                if (submitted) return;
+                submitted = true;
+                cleanup();
+                const chosenOpt = choices[idx];
+                const chosenVal = chosenOpt ? chosenOpt.value : null;
+                if (withKnowledge) {
+                    resolve({ value: chosenVal, allowBase: allowBaseKnowledge });
+                } else {
+                    resolve(chosenVal);
+                }
+            };
+
+            const selectCard = (idx, focusEl = true) => {
+                if (idx < 0 || idx >= choices.length) return;
+                selectedIndex = idx;
+                cardElements.forEach((c, i) => {
+                    const isSel = i === idx;
+                    c.setAttribute("aria-checked", isSel ? "true" : "false");
+                    c.setAttribute("tabindex", isSel ? "0" : "-1");
+                    c.classList.toggle("is-selected", isSel);
+                });
+                if (focusEl && cardElements[idx]) {
+                    cardElements[idx].focus();
+                }
+            };
+
+            choices.forEach((opt, idx) => {
+                const card = document.createElement("div");
+                card.className = "ag-picker-choice-card";
+                card.setAttribute("role", "radio");
+                card.setAttribute("tabindex", idx === 0 ? "0" : "-1");
+                card.setAttribute("aria-checked", idx === 0 ? "true" : "false");
+                if (idx === 0) card.classList.add("is-selected");
+
+                const iconBox = document.createElement("div");
+                iconBox.className = "ag-picker-choice-icon";
+                iconBox.setAttribute("aria-hidden", "true");
+                if (opt.icon && setIconFn) {
+                    try { setIconFn(iconBox, opt.icon); } catch (_) {}
+                }
+                card.appendChild(iconBox);
+
+                const contentBox = document.createElement("div");
+                contentBox.className = "ag-picker-choice-content";
+
+                const nameEl = document.createElement("div");
+                nameEl.className = "ag-picker-choice-title";
+                nameEl.textContent = opt.label || "";
+                contentBox.appendChild(nameEl);
+
+                if (opt.description) {
+                    const descEl = document.createElement("div");
+                    descEl.className = "ag-picker-choice-desc";
+                    descEl.textContent = opt.description;
+                    contentBox.appendChild(descEl);
+                }
+                card.appendChild(contentBox);
+
+                card.onclick = () => {
+                    selectCard(idx, false);
+                    if (!withKnowledge) {
+                        submitSelection(idx);
+                    }
+                };
+
+                listEl.appendChild(card);
+                cardElements.push(card);
+            });
+
+            // Sezione Conoscenza (se knowledge: true)
+            if (withKnowledge) {
+                const knowledgeSectionEl = document.createElement("div");
+                knowledgeSectionEl.className = "ag-picker-section ag-picker-choice-knowledge-section";
+                knowledgeSectionEl.innerHTML = `
+                    <div class="ag-picker-section-label">Modalità Conoscenza per NotebookLM</div>
+                    <div class="ag-picker-segmented" role="radiogroup" aria-label="Modalità conoscenza">
+                        <button type="button" class="ag-picker-segment is-selected" role="radio" aria-checked="true">
+                            <span class="ag-picker-seg-title">🔒 1. Solo NotebookLM</span>
+                            <span class="ag-picker-seg-sub">Esclusivo — Zero conoscenza esterna</span>
+                        </button>
+                        <button type="button" class="ag-picker-segment" role="radio" aria-checked="false">
+                            <span class="ag-picker-seg-title">🧠+🌐 2. NotebookLM + AI</span>
+                            <span class="ag-picker-seg-sub">Fonte primaria + Conoscenza interna AI</span>
+                        </button>
+                    </div>
+                `;
+                modalEl.appendChild(knowledgeSectionEl);
+
+                const segButtons = knowledgeSectionEl.querySelectorAll(".ag-picker-segment");
+                segButtons[0].onclick = () => {
+                    allowBaseKnowledge = false;
+                    segButtons[0].classList.add("is-selected");
+                    segButtons[0].setAttribute("aria-checked", "true");
+                    segButtons[1].classList.remove("is-selected");
+                    segButtons[1].setAttribute("aria-checked", "false");
+                };
+                segButtons[1].onclick = () => {
+                    allowBaseKnowledge = true;
+                    segButtons[1].classList.add("is-selected");
+                    segButtons[1].setAttribute("aria-checked", "true");
+                    segButtons[0].classList.remove("is-selected");
+                    segButtons[0].setAttribute("aria-checked", "false");
+                };
+            }
+
+            // Footer
+            const footerEl = document.createElement("div");
+            footerEl.className = "ag-picker-footer";
+            if (withKnowledge) {
+                footerEl.innerHTML = `
+                    <div class="ag-picker-summary" aria-live="polite"></div>
+                    <div class="ag-picker-footer-buttons">
+                        <button type="button" class="ag-picker-btn ag-picker-btn-cancel">Annulla</button>
+                        <button type="button" class="ag-picker-btn mod-cta ag-picker-btn-confirm">Avvia</button>
+                    </div>
+                `;
+            } else {
+                footerEl.innerHTML = `
+                    <div class="ag-picker-summary" aria-live="polite"></div>
+                    <div class="ag-picker-footer-buttons" style="margin-left: auto;">
+                        <button type="button" class="ag-picker-btn ag-picker-btn-cancel">Annulla</button>
+                    </div>
+                `;
+            }
+            modalEl.appendChild(footerEl);
+
+            const cancelBtn = footerEl.querySelector(".ag-picker-btn-cancel");
+            const confirmBtn = footerEl.querySelector(".ag-picker-btn-confirm");
+
+            if (confirmBtn) {
+                confirmBtn.onclick = () => submitSelection(selectedIndex);
+            }
+
+            const cancelModal = () => {
+                cleanup();
+                if (!submitted) {
+                    submitted = true;
+                    resolve(null);
+                }
+            };
+
+            cancelBtn.onclick = cancelModal;
+            closeBtn.onclick = cancelModal;
+            modalBg.onclick = cancelModal;
+
+            handleKeydown = (e) => {
+                if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancelModal();
+                    return;
+                }
+
+                if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    selectCard((selectedIndex + 1) % choices.length, true);
+                } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    selectCard((selectedIndex - 1 + choices.length) % choices.length, true);
+                } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    submitSelection(selectedIndex);
+                }
+            };
+
+            document.addEventListener("keydown", handleKeydown, true);
+            document.body.appendChild(modalContainer);
+            setTimeout(() => {
+                if (cardElements[0]) cardElements[0].focus();
+            }, 60);
+
+        } catch (err) {
+            console.warn("[Antigravity] Errore apertura openChoiceModal, uso fallback suggester:", err);
+            cleanup();
+            if (tp && tp.system && typeof tp.system.suggester === "function") {
+                try {
+                    const labels = choices.map(o => o.label + (o.description ? ` (${o.description})` : ""));
+                    const values = choices.map(o => o.value);
+                    const chosen = await tp.system.suggester(labels, values, false, title);
+                    if (chosen === null || chosen === undefined) {
+                        resolve(null);
+                        return;
+                    }
+                    if (withKnowledge) {
+                        const allowBase = await promptKnowledgeMode(tp);
+                        if (allowBase === null || allowBase === undefined) {
+                            resolve(null);
+                            return;
+                        }
+                        resolve({ value: chosen, allowBase });
+                    } else {
+                        resolve(chosen);
+                    }
+                } catch (fallbackErr) {
+                    resolve(null);
+                }
+            } else {
+                resolve(null);
+            }
+        }
+    });
+}
+
 // Usati dalla barra del tutor (Scripts/tutor_bar.js)
 /**
  * Dalla barra del tutor: le note di una lezione da creare o completare, con i valori già compilati dal tutor
@@ -3679,10 +3978,35 @@ async function runTutorFlow(tp, app, vaultBasePath, pre) {
     const nbNames = nbs => nbs.map(n => n.title || n.id).join(", ");
     const pickSources = async (current, allowOther, headline) => {
         const opts = [];
-        if (current.length) opts.push({ label: `🧠 NotebookLM del corso: ${nbNames(current)}`, value: "course" });
-        opts.push({ label: "🧠 Scegli altri NotebookLM", value: "nlm" });
-        if (allowOther) opts.push({ label: "📂 Un'altra fonte (YouTube, sito, file locali)", value: "other" });
-        return tp.system.suggester(opts.map(o => o.label), opts.map(o => o.value), false, headline);
+        if (current.length) {
+            opts.push({
+                icon: "brain",
+                label: `NotebookLM del corso: ${nbNames(current)}`,
+                description: "Usa le fonti NotebookLM collegate a questo corso",
+                value: "course"
+            });
+        }
+        opts.push({
+            icon: "library",
+            label: "Scegli altri NotebookLM",
+            description: "Cerca o seleziona altri notebook",
+            value: "nlm"
+        });
+        if (allowOther) {
+            opts.push({
+                icon: "folder-open",
+                label: "Un'altra fonte",
+                description: "YouTube, sito web o file locali",
+                value: "other"
+            });
+        }
+        return openChoiceModal(app, {
+            title: headline,
+            step: "Tutor 2/3",
+            options: opts,
+            knowledge: current.length > 0,
+            tp
+        });
     };
     const nlmSource = (details, allowBase) => ({
         type: "notebooklm",
@@ -3715,26 +4039,60 @@ async function runTutorFlow(tp, app, vaultBasePath, pre) {
         const cfg = pre.cfg;
         let notes = cfg.notes;
         if (notes.length > 1) {
-            const opts = [{ label: `▶️ Tutte le ${notes.length} note: ${notes.map(n => n.title).join(", ")}`, value: notes }]
-                .concat(notes.map(n => ({ label: `📝 Solo «${n.title}»`, value: [n] })));
-            notes = await tp.system.suggester(opts.map(o => o.label), opts.map(o => o.value), false, `Tutor 1/3: Quali note creare per la lezione del ${pre.date}?`);
+            const opts = [
+                {
+                    icon: "list-checks",
+                    label: `Tutte le ${notes.length} note`,
+                    description: notes.map(n => n.title).join(", "),
+                    value: notes
+                },
+                ...notes.map(n => ({
+                    icon: "file-text",
+                    label: `Solo «${n.title}»`,
+                    description: n.title,
+                    value: [n]
+                }))
+            ];
+            notes = await openChoiceModal(app, {
+                title: `Quali note creare per la lezione del ${pre.date}?`,
+                step: "Tutor 1/3",
+                options: opts,
+                tp
+            });
             if (!notes) return;
         }
         const current = (notes[0].notebooks || []);
-        const choice = await pickSources(current, notes.length === 1, "Tutor 2/3: Da quali fonti?");
-        if (!choice) return;
+        const pickRes = await pickSources(current, notes.length === 1, "Da quali fonti?");
+        if (!pickRes) return;
+        const choice = (typeof pickRes === "object" && pickRes !== null && "value" in pickRes) ? pickRes.value : pickRes;
+        let allowBase = (typeof pickRes === "object" && pickRes !== null && "allowBase" in pickRes) ? pickRes.allowBase : false;
+
         if (choice === "other") {
             const source = await selectSourceInteractive(tp, app, vaultBasePath, "Tutor 3/3: Scegli la fonte");
             if (!source) return;
             const n = notes[0];
             const discipline = cfg.discipline;
+            let pole = "personale";
+            try {
+                const rawDisc = fs.readFileSync(path.join(vaultBasePath, ".antigravity", "disciplines.json"), "utf8");
+                const parsedDisc = JSON.parse(rawDisc);
+                const list = Array.isArray(parsedDisc) ? parsedDisc : (parsedDisc?.disciplines || []);
+                const match = list.find(d => d.name === discipline);
+                if (match && match.pole) {
+                    pole = match.pole;
+                } else {
+                    pole = ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia"].includes(discipline) ? "università" : "personale";
+                }
+            } catch (_) {
+                pole = ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia"].includes(discipline) ? "università" : "personale";
+            }
             startJob(withSource({
                 operation: "normal", operation_type: "normal", operation_label: "Nota Normale (Nuova)", moc_mode: null,
                 syllabus_text: "", syllabus_files: [], syllabus_diary_text: n.diary || "", lessons: n.lessons || [],
                 target_file_path: n.target_file_path, target_file_abs: path.join(vaultBasePath, n.target_file_path),
                 title: n.title, topic: n.title, edit_mode: null, user_instructions: "", layout_moc: cfg.moc || "",
                 discipline, disciplina: discipline,
-                pole: ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia"].includes(discipline) ? "università" : "personale"
+                pole
             }, source));
             return;
         }
@@ -3742,9 +4100,22 @@ async function runTutorFlow(tp, app, vaultBasePath, pre) {
         if (choice === "nlm") {
             details = await askNotebooks("Tutor 2/3: Scegli i NotebookLM");
             if (!details) return;
+            const confirmRes = await openChoiceModal(app, {
+                title: "Conferma NotebookLM",
+                step: "Tutor 2/3",
+                subtitle: "Verifica le fonti selezionate e scegli la modalità di conoscenza",
+                options: [{
+                    icon: "brain",
+                    label: details.length === 1 ? `NotebookLM: ${details[0].title}` : `${details.length} NotebookLM selezionati`,
+                    description: nbNames(details),
+                    value: details
+                }],
+                knowledge: true,
+                tp
+            });
+            if (!confirmRes) return;
+            allowBase = confirmRes.allowBase;
         }
-        const allowBase = await promptKnowledgeMode(tp);
-        if (allowBase === null || allowBase === undefined) return;
         const picked = details.map(d => ({ id: d.id, title: d.title }));
         launchBatch(app, vaultBasePath, Object.assign({}, cfg, {
             allow_base_knowledge: allowBase,
@@ -3756,11 +4127,31 @@ async function runTutorFlow(tp, app, vaultBasePath, pre) {
     // Completamento di una nota esistente
     const job = pre.job;
     const modes = [
-        { label: "✏️ Integra quanto fatto a lezione (istruzioni del tutor, modificabili)", value: "surgical_prompt" },
-        { label: "➕ Fondi una nuova fonte nella nota", value: "merge_source" },
-        { label: "✨ Riformatta allo standard della disciplina", value: "reformat_standard" }
+        {
+            icon: "pencil",
+            label: "Integra quanto fatto a lezione",
+            description: "Istruzioni del tutor, modificabili",
+            value: "surgical_prompt"
+        },
+        {
+            icon: "git-merge",
+            label: "Fondi una nuova fonte nella nota",
+            description: "Aggiungi materiale da YouTube, web o file locali",
+            value: "merge_source"
+        },
+        {
+            icon: "sparkles",
+            label: "Riformatta allo standard della disciplina",
+            description: "Adeguamento struttura e stile al MOC",
+            value: "reformat_standard"
+        }
     ];
-    const mode = await tp.system.suggester(modes.map(o => o.label), modes.map(o => o.value), false, `Tutor 1/3: Come completare «${job.title}»?`);
+    const mode = await openChoiceModal(app, {
+        title: `Come completare «${job.title}»?`,
+        step: "Tutor 1/3",
+        options: modes,
+        tp
+    });
     if (!mode) return;
     let instructions = null;
     try {
@@ -3777,24 +4168,67 @@ async function runTutorFlow(tp, app, vaultBasePath, pre) {
         return;
     }
     const current = job.notebook_details || [];
-    const opts = [];
-    if (current.length) opts.push({ label: `🧠 NotebookLM del corso: ${nbNames(current)}`, value: "course" });
-    opts.push({ label: "🧠 Scegli altri NotebookLM", value: "nlm" });
-    opts.push({ label: "📄 Nessuna fonte esterna (solo la nota e il diario)", value: "none" });
-    const choice = await tp.system.suggester(opts.map(o => o.label), opts.map(o => o.value), false, "Tutor 3/3: Da quali fonti?");
-    if (!choice) return;
+    const compSourceOpts = [];
+    if (current.length) {
+        compSourceOpts.push({
+            icon: "brain",
+            label: `NotebookLM del corso: ${nbNames(current)}`,
+            description: "Usa le fonti NotebookLM collegate a questo corso",
+            value: "course"
+        });
+    }
+    compSourceOpts.push({
+        icon: "library",
+        label: "Scegli altri NotebookLM",
+        description: "Cerca o seleziona altri notebook",
+        value: "nlm"
+    });
+    compSourceOpts.push({
+        icon: "file-x",
+        label: "Nessuna fonte esterna",
+        description: "Solo la nota e il diario",
+        value: "none"
+    });
+    const compPickRes = await openChoiceModal(app, {
+        title: "Da quali fonti?",
+        step: "Tutor 3/3",
+        options: compSourceOpts,
+        knowledge: current.length > 0,
+        tp
+    });
+    if (!compPickRes) return;
+    const choice = (typeof compPickRes === "object" && compPickRes !== null && "value" in compPickRes) ? compPickRes.value : compPickRes;
+    let allowBase = (typeof compPickRes === "object" && compPickRes !== null && "allowBase" in compPickRes) ? compPickRes.allowBase : false;
+
     if (choice === "none") {
         startJob(withSource(job, { type: "vault_file", label: job.title, value: job.target_file_path }));
         return;
     }
-    const details = choice === "nlm" ? await askNotebooks("Tutor 3/3: Scegli i NotebookLM") : current;
-    if (!details) return;
-    const allowBase = await promptKnowledgeMode(tp);
-    if (allowBase === null || allowBase === undefined) return;
+    let details = current;
+    if (choice === "nlm") {
+        details = await askNotebooks("Tutor 3/3: Scegli i NotebookLM");
+        if (!details) return;
+        const confirmRes = await openChoiceModal(app, {
+            title: "Conferma NotebookLM",
+            step: "Tutor 3/3",
+            subtitle: "Verifica le fonti selezionate e scegli la modalità di conoscenza",
+            options: [{
+                icon: "brain",
+                label: details.length === 1 ? `NotebookLM: ${details[0].title}` : `${details.length} NotebookLM selezionati`,
+                description: nbNames(details),
+                value: details
+            }],
+            knowledge: true,
+            tp
+        });
+        if (!confirmRes) return;
+        allowBase = confirmRes.allowBase;
+    }
     startJob(withSource(job, nlmSource(details, allowBase)));
 }
 
 module.exports.launchBatch = launchBatch;
 module.exports.launchJob = launchBackgroundJob;
 module.exports.runTutorFlow = runTutorFlow;
+module.exports.openChoiceModal = openChoiceModal;
 

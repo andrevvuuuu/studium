@@ -838,6 +838,32 @@ module.exports = function injectAgStyle() {
             scrollbar-gutter: stable;
             padding: 2px;
         }
+        .ag-picker-choice-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            max-height: min(56vh, 460px);
+            overflow-y: auto;
+            scrollbar-gutter: stable;
+            padding: 2px;
+        }
+        .ag-picker-choice-grid .ag-picker-section-label {
+            grid-column: 1 / -1;
+            margin-top: 6px;
+        }
+        .ag-picker-choice-grid .ag-picker-section-label:first-child {
+            margin-top: 0;
+        }
+        .ag-picker-choice-grid .ag-picker-choice-card {
+            min-height: 68px;
+            height: 100%;
+        }
+        .ag-picker-choice-list .ag-picker-section-label {
+            margin-top: 6px;
+        }
+        .ag-picker-choice-list .ag-picker-section-label:first-child {
+            margin-top: 0;
+        }
         .ag-picker-choice-card {
             display: flex;
             align-items: center;
@@ -904,12 +930,20 @@ module.exports = function injectAgStyle() {
             font-size: var(--font-ui-small);
             color: var(--text-muted);
             line-height: 1.3;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: normal;
         }
         .ag-picker-choice-knowledge-section {
             margin-top: 4px;
+        }
+        @media (max-width: 600px) {
+            .ag-picker-choice-grid {
+                grid-template-columns: 1fr;
+            }
         }
         @media (max-width: 600px) {
             .modal.ag-picker {

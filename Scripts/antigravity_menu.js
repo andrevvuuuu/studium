@@ -3157,21 +3157,23 @@ module.exports = async function (tp) {
         // STEP 1: Menu a Tendina 1 (Tipo di Operazione)
         // -------------------------------------------------------------
         const operationOptions = [
-            { label: "📝 Crea Nota Normale (Nuova)", value: "normal" },
-            { label: "🗺️ Crea / Aggiorna MOC (Map of Content)", value: "moc" },
-            { label: "🛠️ Modifica / Migliora Nota Esistente", value: "edit" },
-            { label: "🤖 Crea Note in Automatico dal MOC (Batch)", value: "moc_batch" },
-            { label: "🔎 Verifica e Correggi Note Esistenti", value: "correctness" },
-            { label: "🔬 Nota Studio Scientifico (DOI / PMID / PDF)", value: "paper_note" },
-            { label: "🏋️ Integra Studi in una Nota Bodybuilding", value: "concept_evidence" }
+            { group: "Crea", value: "normal", icon: "file-plus", label: "Nuova nota", description: "Una nota da una o più fonti" },
+            { group: "Crea", value: "moc", icon: "map", label: "Crea o aggiorna un MOC", description: "Mappa dei contenuti di un corso o argomento" },
+            { group: "Crea", value: "moc_batch", icon: "layers", label: "Note automatiche dal MOC", description: "Crea in sequenza le note mancanti di un MOC" },
+            { group: "Migliora", value: "edit", icon: "pencil-line", label: "Modifica una nota", description: "Integra, fondi una fonte o riformatta" },
+            { group: "Migliora", value: "correctness", icon: "shield-check", label: "Verifica e correggi", description: "Controlla la correttezza di note, MOC o cartelle" },
+            { group: "Ricerca scientifica", value: "paper_note", icon: "flask-conical", label: "Nota da studio scientifico", description: "Da DOI, PMID o PDF" },
+            { group: "Ricerca scientifica", value: "concept_evidence", icon: "dumbbell", label: "Integra studi in Bodybuilding", description: "Aggiunge evidenze a una nota esistente" }
         ];
 
-        const chosenOp = await tp.system.suggester(
-            operationOptions.map(o => o.label),
-            operationOptions.map(o => o.value),
-            false,
-            "Passo 1/8: Seleziona il Tipo di Operazione"
-        );
+        const chosenOp = await openChoiceModal(app, {
+            tp,
+            title: "Cosa vuoi fare?",
+            step: "Passo 1/8",
+            subtitle: "Antigravity · automazione delle note",
+            layout: "grid",
+            options: operationOptions
+        });
 
         if (!chosenOp) {
             return "";
@@ -3677,6 +3679,7 @@ function openChoiceModal(app, options) {
     const subtitle = opts.subtitle || "";
     const choices = Array.isArray(opts.options) ? opts.options : [];
     const withKnowledge = opts.knowledge === true;
+    const isGrid = opts.layout === "grid";
 
     ensureAgStyle();
 
@@ -3752,7 +3755,7 @@ function openChoiceModal(app, options) {
 
             // Lista Card
             const listEl = document.createElement("div");
-            listEl.className = "ag-picker-choice-list";
+            listEl.className = isGrid ? "ag-picker-choice-list ag-picker-choice-grid" : "ag-picker-choice-list";
             listEl.setAttribute("role", "radiogroup");
             listEl.setAttribute("aria-label", title);
             modalEl.appendChild(listEl);
@@ -3791,7 +3794,18 @@ function openChoiceModal(app, options) {
                 }
             };
 
+            let currentGroup = null;
             choices.forEach((opt, idx) => {
+                if (opt.group && opt.group !== currentGroup) {
+                    currentGroup = opt.group;
+                    const groupLabel = document.createElement("div");
+                    groupLabel.className = "ag-picker-section-label";
+                    groupLabel.textContent = opt.group;
+                    listEl.appendChild(groupLabel);
+                } else if (!opt.group) {
+                    currentGroup = null;
+                }
+
                 const card = document.createElement("div");
                 card.className = "ag-picker-choice-card";
                 card.setAttribute("role", "radio");
@@ -3918,15 +3932,36 @@ function openChoiceModal(app, options) {
                     return;
                 }
 
-                if (e.key === "ArrowDown") {
-                    e.preventDefault();
-                    selectCard((selectedIndex + 1) % choices.length, true);
-                } else if (e.key === "ArrowUp") {
-                    e.preventDefault();
-                    selectCard((selectedIndex - 1 + choices.length) % choices.length, true);
-                } else if (e.key === "Enter") {
-                    e.preventDefault();
-                    submitSelection(selectedIndex);
+                if (choices.length === 0) return;
+
+                if (isGrid) {
+                    if (e.key === "ArrowRight") {
+                        e.preventDefault();
+                        selectCard((selectedIndex + 1) % choices.length, true);
+                    } else if (e.key === "ArrowLeft") {
+                        e.preventDefault();
+                        selectCard((selectedIndex - 1 + choices.length) % choices.length, true);
+                    } else if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        selectCard((selectedIndex + 2) % choices.length, true);
+                    } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        selectCard((selectedIndex - 2 + choices.length * 2) % choices.length, true);
+                    } else if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitSelection(selectedIndex);
+                    }
+                } else {
+                    if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        selectCard((selectedIndex + 1) % choices.length, true);
+                    } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        selectCard((selectedIndex - 1 + choices.length) % choices.length, true);
+                    } else if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitSelection(selectedIndex);
+                    }
                 }
             };
 

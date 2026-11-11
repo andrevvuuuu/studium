@@ -1174,6 +1174,9 @@ function openDisciplinePickerModal(app, options) {
 
         const modalEl = document.createElement("div");
         modalEl.className = "modal ag-picker ag-picker-discipline";
+        modalEl.setAttribute("role", "dialog");
+        modalEl.setAttribute("aria-modal", "true");
+        modalEl.setAttribute("aria-labelledby", "ag-discipline-title");
         modalContainer.appendChild(modalEl);
 
         // Header
@@ -1181,12 +1184,12 @@ function openDisciplinePickerModal(app, options) {
         headerEl.className = "ag-picker-header";
         headerEl.innerHTML = `
             <div class="ag-picker-title-row">
-                <h2 class="ag-picker-title">${escapeHtml(title)}</h2>
+                <h2 id="ag-discipline-title" class="ag-picker-title">${escapeHtml(title)}</h2>
             </div>
             <p class="ag-picker-subtitle">Seleziona la materia o lascia che Antigravity la rilevi automaticamente</p>
-            <div class="ag-picker-close-btn" role="button" aria-label="Chiudi" title="Chiudi">
+            <button type="button" class="ag-picker-close-btn" aria-label="Chiudi" title="Chiudi">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </div>
+            </button>
         `;
         modalEl.appendChild(headerEl);
 
@@ -1195,8 +1198,9 @@ function openDisciplinePickerModal(app, options) {
         autoCard.className = "ag-picker-card ag-picker-card-featured";
         autoCard.setAttribute("tabindex", "0");
         autoCard.setAttribute("role", "button");
+        autoCard.setAttribute("aria-label", "Rileva o crea la materia automaticamente");
         autoCard.innerHTML = `
-            <div class="ag-picker-card-icon">✨</div>
+            <div class="ag-picker-card-icon" aria-hidden="true">✨</div>
             <div class="ag-picker-card-content">
                 <div class="ag-picker-card-name">✨ Rileva o crea automaticamente</div>
                 <div class="ag-picker-card-desc">Analizza le fonti: usa una materia esistente o ne crea una nuova (cartella, profilo, MOC)</div>
@@ -1213,6 +1217,10 @@ function openDisciplinePickerModal(app, options) {
 
         // Contenitore gruppi
         const groupsContainer = document.createElement("div");
+        groupsContainer.className = "ag-picker-groups-container";
+        groupsContainer.setAttribute("role", "region");
+        groupsContainer.setAttribute("aria-label", "Materie disponibili");
+        modalEl.appendChild(groupsContainer);
         groupsContainer.className = "ag-picker-groups-container";
         modalEl.appendChild(groupsContainer);
 
@@ -1263,7 +1271,12 @@ function openDisciplinePickerModal(app, options) {
             chip.setAttribute("tabindex", "0");
             chip.setAttribute("role", "button");
             const isCur = current && (current === disc.name || (current.name && current.name === disc.name));
-            if (isCur) chip.classList.add("is-selected");
+            if (isCur) {
+                chip.classList.add("is-selected");
+                chip.setAttribute("aria-pressed", "true");
+            } else {
+                chip.setAttribute("aria-pressed", "false");
+            }
             chip.innerHTML = `
                 <span class="ag-picker-chip-emoji">${disc.emoji || "📚"}</span>
                 <span class="ag-picker-chip-name">${escapeHtml(disc.name)}</span>
@@ -1442,6 +1455,9 @@ function openSourcePickerModal(app, options) {
 
         const modalEl = document.createElement("div");
         modalEl.className = "modal ag-picker";
+        modalEl.setAttribute("role", "dialog");
+        modalEl.setAttribute("aria-modal", "true");
+        modalEl.setAttribute("aria-labelledby", "ag-source-title");
         modalContainer.appendChild(modalEl);
 
         // 1. Header
@@ -1457,13 +1473,13 @@ function openSourcePickerModal(app, options) {
 
         headerEl.innerHTML = `
             <div class="ag-picker-title-row">
-                <h2 class="ag-picker-title">${escapeHtml(title)}</h2>
+                <h2 id="ag-source-title" class="ag-picker-title">${escapeHtml(title)}</h2>
                 ${step ? `<span class="ag-picker-step-chip">${escapeHtml(step)}</span>` : ""}
             </div>
             ${subText ? `<p class="ag-picker-subtitle">${escapeHtml(subText)}</p>` : ""}
-            <div class="ag-picker-close-btn" role="button" aria-label="Chiudi" title="Chiudi">
+            <button type="button" class="ag-picker-close-btn" aria-label="Chiudi" title="Chiudi">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </div>
+            </button>
         `;
         modalEl.appendChild(headerEl);
 
@@ -1604,7 +1620,7 @@ function openSourcePickerModal(app, options) {
         const footerEl = document.createElement("div");
         footerEl.className = "ag-picker-footer";
         footerEl.innerHTML = `
-            <div class="ag-picker-summary">Caricamento...</div>
+            <div class="ag-picker-summary" aria-live="polite">Caricamento...</div>
             <div class="ag-picker-footer-buttons">
                 <button type="button" class="ag-picker-btn ag-picker-btn-cancel">Annulla</button>
                 <button type="button" class="ag-picker-btn mod-cta ag-picker-btn-confirm" disabled>Avvia</button>
@@ -1733,7 +1749,7 @@ function openSourcePickerModal(app, options) {
                     if (notebooksLoading) {
                         listContainer.setAttribute("aria-busy", "true");
                         listContainer.setAttribute("aria-label", "Caricamento dei notebook…");
-                        listContainer.innerHTML = '<span class="ag-picker-sr-only">Caricamento dei notebook…</span>' + Array.from({ length: 4 }, () => '<div class="ag-picker-skeleton" style="padding: 10px; margin: 4px 0;"><div style="height: 12px; border-radius: 4px; background: var(--background-modifier-hover);"></div><div style="height: 12px; border-radius: 4px; background: var(--background-modifier-hover); margin-top: 6px; width: 55%;"></div></div>').join("");
+                        listContainer.innerHTML = '<span class="ag-picker-sr-only">Caricamento dei notebook…</span>' + Array.from({ length: 4 }, () => '<div class="ag-picker-skeleton"><div class="ag-picker-skeleton-bar ag-picker-skeleton-title"></div><div class="ag-picker-skeleton-bar ag-picker-skeleton-meta"></div></div>').join("");
                         return;
                     }
                     listContainer.removeAttribute("aria-busy");
@@ -1887,7 +1903,7 @@ function openSourcePickerModal(app, options) {
                 wrap.className = "ag-picker-field-wrap";
                 wrap.innerHTML = `
                     <div class="ag-picker-actions-row">
-                        <button type="button" class="ag-picker-btn mod-cta ag-picker-browse-btn">📁 Scegli file dal computer…</button>
+                        <button type="button" class="ag-picker-btn ag-picker-browse-btn">📁 Scegli file dal computer…</button>
                         <span class="ag-picker-muted-hint">PDF, TXT o Markdown</span>
                     </div>
                     <div class="ag-picker-file-list"></div>

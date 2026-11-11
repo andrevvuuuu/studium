@@ -1715,9 +1715,13 @@ async function runMocBatchFlow(tp, app, vaultBasePath) {
 
     let discipline = plan.discipline;
     if (!discipline) {
+        let batchDisciplines = ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia", "Bodybuilding", "Nutrizione e Salute", "Chimica", "Droghe", "Tecnologia ed Elettronica", "Musica e Industria Musicale", "Arte e Storia dell'Arte", "Filosofia", "Letteratura", "Analisi Narrativa", "Storia", "Politica e Geopolitica", "Economia e Finanza", "Psicologia"];
+        try {
+            const reg = JSON.parse(fs.readFileSync(path.join(vaultBasePath, ".antigravity", "disciplines.json"), "utf8"));
+            if (Array.isArray(reg.disciplines)) batchDisciplines = reg.disciplines.map(d => d.name);
+        } catch (_) {}
         const d = await tp.system.suggester(
-            ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia", "Bodybuilding", "Nutrizione e Salute", "Chimica", "Droghe", "Tecnologia ed Elettronica", "Musica e Industria Musicale", "Arte e Storia dell'Arte", "Filosofia", "Letteratura", "Analisi Narrativa", "Storia", "Politica e Geopolitica", "Economia e Finanza", "Psicologia"],
-            ["Matematica", "Informatica", "Fisica", "Intelligenza Artificiale", "Neuroscienze", "Biologia", "Bodybuilding", "Nutrizione e Salute", "Chimica", "Droghe", "Tecnologia ed Elettronica", "Musica e Industria Musicale", "Arte e Storia dell'Arte", "Filosofia", "Letteratura", "Analisi Narrativa", "Storia", "Politica e Geopolitica", "Economia e Finanza", "Psicologia"],
+            batchDisciplines, batchDisciplines,
             false,
             `Il MOC non ha la proprietà Disciplina: in quale disciplina salvare le note?`
         );
@@ -2118,32 +2122,14 @@ module.exports = async function (tp) {
             }
         }
 
-        // Elenco delle 20 Macro-Discipline del Vault
-        const disciplines = [
-            // Polo #università
-            { name: "Matematica", pole: "università", label: "🎓 Matematica  [Polo #università]" },
-            { name: "Informatica", pole: "università", label: "🎓 Informatica  [Polo #università]" },
-            { name: "Fisica", pole: "università", label: "🎓 Fisica  [Polo #università]" },
-            { name: "Intelligenza Artificiale", pole: "università", label: "🎓 Intelligenza Artificiale  [Polo #università]" },
-            { name: "Neuroscienze", pole: "università", label: "🎓 Neuroscienze  [Polo #università]" },
-            { name: "Biologia", pole: "università", label: "🎓 Biologia  [Polo #università]" },
-
-            // Polo #personale
-            { name: "Bodybuilding", pole: "personale", label: "🏋️ Bodybuilding  [Polo #personale]" },
-            { name: "Nutrizione e Salute", pole: "personale", label: "🥗 Nutrizione e Salute  [Polo #personale]" },
-            { name: "Chimica", pole: "personale", label: "🧪 Chimica  [Polo #personale]" },
-            { name: "Droghe", pole: "personale", label: "💊 Droghe  [Polo #personale]" },
-            { name: "Tecnologia ed Elettronica", pole: "personale", label: "💻 Tecnologia ed Elettronica  [Polo #personale]" },
-            { name: "Musica e Industria Musicale", pole: "personale", label: "🎵 Musica e Industria Musicale  [Polo #personale]" },
-            { name: "Arte e Storia dell'Arte", pole: "personale", label: "🎨 Arte e Storia dell'Arte  [Polo #personale]" },
-            { name: "Filosofia", pole: "personale", label: "🏛️ Filosofia  [Polo #personale]" },
-            { name: "Letteratura", pole: "personale", label: "📚 Letteratura  [Polo #personale]" },
-            { name: "Analisi Narrativa", pole: "personale", label: "✍️ Analisi Narrativa  [Polo #personale]" },
-            { name: "Storia", pole: "personale", label: "📜 Storia  [Polo #personale]" },
-            { name: "Politica e Geopolitica", pole: "personale", label: "🌐 Politica e Geopolitica  [Polo #personale]" },
-            { name: "Economia e Finanza", pole: "personale", label: "📈 Economia e Finanza  [Polo #personale]" },
-            { name: "Psicologia", pole: "personale", label: "🧠 Psicologia  [Polo #personale]" }
+        // Registro condiviso delle materie, con fallback locale se il JSON non è leggibile.
+        const fallbackDisciplines = [
+            {name:"Matematica",pole:"università",emoji:"🎓"},{name:"Informatica",pole:"università",emoji:"🎓"},{name:"Fisica",pole:"università",emoji:"🎓"},{name:"Intelligenza Artificiale",pole:"università",emoji:"🎓"},{name:"Neuroscienze",pole:"università",emoji:"🎓"},{name:"Biologia",pole:"università",emoji:"🎓"},
+            {name:"Bodybuilding",pole:"personale",emoji:"🏋️"},{name:"Nutrizione e Salute",pole:"personale",emoji:"🥗"},{name:"Chimica",pole:"personale",emoji:"🧪"},{name:"Droghe",pole:"personale",emoji:"💊"},{name:"Tecnologia ed Elettronica",pole:"personale",emoji:"💻"},{name:"Musica e Industria Musicale",pole:"personale",emoji:"🎵"},{name:"Arte e Storia dell'Arte",pole:"personale",emoji:"🎨"},{name:"Filosofia",pole:"personale",emoji:"🏛️"},{name:"Letteratura",pole:"personale",emoji:"📚"},{name:"Analisi Narrativa",pole:"personale",emoji:"✍️"},{name:"Storia",pole:"personale",emoji:"📜"},{name:"Politica e Geopolitica",pole:"personale",emoji:"🌐"},{name:"Economia e Finanza",pole:"personale",emoji:"📈"},{name:"Psicologia",pole:"personale",emoji:"🧠"}
         ];
+        let disciplineEntries = fallbackDisciplines;
+        try { const registry = JSON.parse(fs.readFileSync(path.join(vaultBasePath, ".antigravity", "disciplines.json"), "utf8")); if (Array.isArray(registry.disciplines)) disciplineEntries = registry.disciplines; } catch (_) {}
+        const disciplines = disciplineEntries.map(d => ({...d, label: `${d.emoji || "📚"} ${d.name}  [Polo #${d.pole || "personale"}]`}));
 
         // -------------------------------------------------------------
         // STEP 1: Menu a Tendina 1 (Tipo di Operazione)
@@ -2250,8 +2236,8 @@ module.exports = async function (tp) {
 
             if (!chosenDiscipline) {
                 chosenDiscipline = await tp.system.suggester(
-                    disciplines.map(d => d.label),
-                    disciplines,
+                    ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
+                    [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
                     false,
                     `Assegna la Disciplina a "${selectedFile.basename}":`
                 );
@@ -2354,8 +2340,8 @@ module.exports = async function (tp) {
         } else if (chosenOp === "moc") {
             // Passo 2/8: Disciplina
             chosenDiscipline = await tp.system.suggester(
-                disciplines.map(d => d.label),
-                disciplines,
+                ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
+                [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
                 false,
                 "Passo 2/8: Seleziona la Disciplina per il MOC:"
             );
@@ -2505,10 +2491,10 @@ module.exports = async function (tp) {
         } else {
             // Passo 2/8: Disciplina
             chosenDiscipline = await tp.system.suggester(
-                disciplines.map(d => d.label),
-                disciplines,
+                ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
+                [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
                 false,
-                "Passo 2/8: Seleziona la Disciplina (Lista Chiusa 20 Materie)"
+                "Passo 2/8: Seleziona la Disciplina"
             );
             if (!chosenDiscipline) {
                 return "";
@@ -2558,7 +2544,7 @@ module.exports = async function (tp) {
             // Unico nome possibile per i MOC: 01 MOC's/<Argomento> MOC.md (lo stesso che usa l'orchestratore)
             targetRelPath = `01 MOC's/${topic.trim()} MOC.md`;
         } else {
-            targetRelPath = `${chosenDiscipline.name}/${topic.trim()}.md`;
+            targetRelPath = chosenDiscipline.name === "__auto__" ? `__auto__/${topic.trim()}.md` : `${chosenDiscipline.name}/${topic.trim()}.md`;
         }
 
         // 1. Pulizia e reset totale dell'ambiente per idempotenza assoluta

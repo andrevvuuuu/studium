@@ -59,7 +59,7 @@ Prima di scrivere ogni sezione o risultato matematico/scientifico $R$, applica t
 - I callout di **"Conflitto Epistemico"** e i paragrafi di **"Confronto Interdisciplinare"** compaiono **solo se esistono davvero nelle fonti o aggiungono comprensione fondamentale**. Non forzare mai la presenza di queste sezioni se non giustificate dai contenuti.
 
 ### 7. Sezione Finale Unificata per gli Scorpori
-- Nella sezione finale `Note e Paragrafi Collegati`, inserisci **obbligatoriamente** la voce:
+- Se è presente la sezione finale `Note e Paragrafi Collegati`, inserisci la voce:
   `### Teoremi e Concetti Derivati (Note Separate)`
   contenente l'elenco dei teoremi, concetti derivati e metodi operativi scorporati dalla nota, ciascuno corredato da un breve raccordo logico e dal relativo [[wikilink]].
 - Usa quest'unica voce standard senza duplicarla con dizioni alternative.
@@ -153,7 +153,7 @@ aliases:
      ```
    - **Vietati tassativamente valori multipli**, sintassi con pipe o parentesi quadre (`Type: [Concetto | Teorema]`), stringhe inline (`Type: Concetto`) o array inline (`Type: [Concetto]`).
 2. **Nessun cancelletto nei tag:** Nei campi YAML i tag non devono contenere `#` (Obsidian li trasforma automaticamente in tag interni).
-3. **Attributo `Disciplina`:** Deve coincidere esattamente con uno dei 20 nomi ufficiali (es. `Matematica`, `Intelligenza Artificiale`, `Bodybuilding`, `Nutrizione e Salute`, `Droghe`).
+3. **Attributo `Disciplina`:** Deve coincidere con un nome presente in `.antigravity/disciplines.json` (es. `Matematica`, `Intelligenza Artificiale`, `Bodybuilding`, `Nutrizione e Salute`, `Droghe`).
 4. **I 5 Valori Canonici del `Type`:**
    - `Concetto`: Definizioni teoriche, costrutti, fenomeni anatomici/fisiologici o entità molecolari.
    - `Teorema`: Enunciati formali matematici o leggi fisiche con ipotesi, tesi e dimostrazione formale a sé stante.
@@ -249,6 +249,8 @@ Il vault supporta tre distinte modalità di generazione dei MOC, ciascuna concep
 
 Il grafo della conoscenza di Obsidian acquista valore solo se i collegamenti sono densi, corretti, chirurgicamente precisi e privi di link orfani o generici.
 
+**Collega un'altra nota SOLO se esiste un'affinità concettuale reale (prerequisito, caso particolare, applicazione diretta). Mai link di riempimento, mai verso Matematica o corsi universitari se l'argomento non li richiede. Nessun link è meglio di un link forzato.**
+
 1. **Consultazione Obbligatoria dell'Indice e del Dossier Raccomandazioni:**
    - Prima di scrivere o modificare una nota, l'agente consulta `.antigravity/vault-index.json` e il dossier generato da `paragraph_linker.py` (`.antigravity/job-context/recommended-links.md`) per individuare esattamente quali note, paragrafi specifici e blocchi semantici collegare.
 2. **Sintassi con Alias Grammaticale nelle Note Normali vs Divieto Assoluto nei MOC:**
@@ -261,12 +263,12 @@ Il grafo della conoscenza di Obsidian acquista valore solo se i collegamenti son
    - **MAI nel Codice o nelle Formule:** Non inserire wikilink dentro blocchi LaTeX (`$$...$$` o `$...$`) né dentro blocchi di codice (`` `inline` `` o ````fenced````).
 4. **Quando usare [[Nota Intera|testo]] vs [[Nota#Paragrafo|testo]] (Precisione Chirurgica):**
    - **Link a Nota Intera:** Usa [[Nome Nota|testo]] (es. [[Numeri Interi Relativi|numeri interi]]) esclusivamente quando nel discorso ti riferisci all'oggetto o alla materia generale nel suo complesso.
-   - **Link a Paragrafo Specifico (OBBLIGATORIO):** Usa **obbligatoriamente** la sintassi di sezione [[Nome Nota#Numero e Titolo Esatto Paragrafo|testo nel discorso]] ogni volta che citi una proprietà specifica, una tecnica dimostrativa, un sottoconcetto o un passaggio matematico/ingegneristico che non ha una nota autonoma ma è trattato in un paragrafo preciso di un'altra nota (es. [[Elementi di Logica Matematica#4.2 Dimostrazione per Assurdo|dimostrazione per assurdo]] o [[Numeri Interi Relativi#4.2 Proprietà di Integrità e Legge di Cancellazione Moltiplicativa|legge di cancellazione moltiplicativa]]). Prendi i link pronti dalla **Tabella A** di `recommended-links.md`.
+   - **Link a Paragrafo Specifico (preferito quando si linka):** Usa la sintassi di sezione [[Nome Nota#Numero e Titolo Esatto Paragrafo|testo nel discorso]] quando citi una proprietà specifica, una tecnica dimostrativa o un sottoconcetto trattato in un paragrafo preciso di un'altra nota (es. [[Ricerca Binaria#Invariante del ciclo|l'invariante del ciclo]] o [[Storia della Fotografia#La camera oscura|la camera oscura]]). Prendi i link pertinenti dalla **Tabella A** di `recommended-links.md`.
 5. **Uso e Creazione di ID di Blocco Semantici (`^id-blocco`):**
    - **Quando citi un teorema o un box formalizzato:** Se il concetto citato è un singolo callout o teorema specifico presente in un'altra nota, linka direttamente il blocco con [[Nome Nota#^id-blocco|testo]] (prendendo la sintassi dalla **Tabella B** di `recommended-links.md`).
    - **Quando scrivi una nuova nota:** In fondo ai callout più importanti (`> [!theorem]`, `> [!definition]`, `> [!tip] Dimostrazione...` e `> [!note] Decodifica...` fondamentali) **aggiungi obbligatoriamente un ID di blocco semantico pulito in kebab-case** (es. `^teo-unicita-limite`, `^def-relazione-equivalenza`, `^decodifica-significato-fisico`), così le note future potranno agganciarsi direttamente a quel singolo blocco concettuale.
 6. **Sezione Finale `Note e Paragrafi Collegati`:**
-   - In fondo a ogni nota, all'interno della sezione dedicata ai collegamenti, struttura le voci in questo modo tassativo:
+   - Includi la sezione e le sue sottosezioni solo se ci sono link reali. Quando presenti, struttura le voci così:
      * **Teoremi e Concetti Derivati (Note Separate):** Sottosezione esplicita `### Teoremi e Concetti Derivati (Note Separate)` contenente l'elenco dei teoremi autonomi, concetti adiacenti o metodi d'esame scorporati dalla nota, ciascuno collegato tramite [[wikilink]] con un breve ponte logico discorsivo. Usa esclusivamente questa voce senza duplicarla con dizioni alternative.
      * **Riferimenti Puntuali a Paragrafi:** Sottosezione esplicita `### Riferimenti Puntuali a Paragrafi` che elenca e sintetizza i collegamenti diretti [[Nota#Paragrafo]] e [[Nota#^id-blocco]] impiegati nel testo.
      * **Note Generali e MOC:** Collegamenti alle note macro e di risalita al MOC di disciplina.

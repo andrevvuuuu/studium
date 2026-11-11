@@ -73,8 +73,8 @@ def resolve_vault_index_path(vault_root: Path) -> Path:
     vault_idx = vault_root / ".antigravity" / "vault-index.json"
     return vault_idx if vault_idx.exists() else runtime_idx
 
-# Mappa delle 20 Macro-Discipline per normalizzazione degli Slug
-DISCIPLINE_SLUG_MAP = {
+# Fallback storico usato solo se il registro non è disponibile.
+_FALLBACK_DISCIPLINE_SLUG_MAP = {
     "Matematica": "matematica",
     "Informatica": "informatica",
     "Fisica": "fisica",
@@ -96,6 +96,44 @@ DISCIPLINE_SLUG_MAP = {
     "Economia e Finanza": "economia-e-finanza",
     "Psicologia": "psicologia"
 }
+
+_FALLBACK_DISCIPLINE_ALIASES = {
+    "Arte e Storia dell'Arte": ["arte", "storia dell'arte"],
+    "Biologia": ["biologia", "biologia e neuroscienze"],
+    "Neuroscienze": ["neuroscienze", "biologia e neuroscienze"],
+    "Letteratura": ["letteratura", "letteratura inglese"],
+    "Storia": ["storia", "storiа"],
+    "Politica e Geopolitica": ["politica", "geopolitica", "politica e geopolitica", "educazione civica"],
+    "Economia e Finanza": ["economia", "finanza", "economia e finanza"],
+    "Tecnologia ed Elettronica": ["tecnologia", "elettronica", "tecnologia ed elettronica"],
+    "Musica e Industria Musicale": ["musica", "industria musicale", "musica e industria musicale"],
+}
+
+def load_disciplines(vault_root: Path) -> List[dict]:
+    """Legge il registro delle discipline; in caso di errore restituisce il catalogo storico."""
+    registry = vault_root / ".antigravity" / "disciplines.json"
+    try:
+        data = json.loads(registry.read_text(encoding="utf-8"))
+        entries = data.get("disciplines")
+        if isinstance(entries, list) and all(isinstance(e, dict) and e.get("name") and e.get("slug") for e in entries):
+            return entries
+    except Exception:
+        pass
+    return [{"name": name, "slug": slug, "pole": "personale", "emoji": "", "aliases": _FALLBACK_DISCIPLINE_ALIASES.get(name, [])} for name, slug in _FALLBACK_DISCIPLINE_SLUG_MAP.items()]
+
+def register_discipline(vault_root: Path, entry: dict) -> None:
+    """Aggiunge o aggiorna una disciplina con sostituzione atomica del registro."""
+    registry = vault_root / ".antigravity" / "disciplines.json"
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    entries = load_disciplines(vault_root)
+    entries = [e for e in entries if e.get("name") != entry.get("name")]
+    entries.append(entry)
+    tmp = registry.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"disciplines": entries}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, registry)
+
+DISCIPLINE_SLUG_MAP = {e["name"]: e["slug"] for e in load_disciplines(Path(__file__).resolve().parents[2])}
+DISCIPLINE_DIR_ALIASES = {e["name"]: e.get("aliases", []) for e in load_disciplines(Path(__file__).resolve().parents[2])}
 
 # Dizionario Termini Scientifici Bilingue (Italiano -> Termini Medici/Biologici Inglesi per PubMed)
 SCIENTIFIC_TERM_DETECTORS = {
@@ -1074,17 +1112,6 @@ def build_vault_notes_summary(
         slug.replace("-", " ").lower(),
     ]
 
-    DISCIPLINE_DIR_ALIASES = {
-        "Arte e Storia dell'Arte": ["arte", "storia dell'arte"],
-        "Biologia": ["biologia", "biologia e neuroscienze"],
-        "Neuroscienze": ["neuroscienze", "biologia e neuroscienze"],
-        "Letteratura": ["letteratura", "letteratura inglese"],
-        "Storia": ["storia", "storiа"],
-        "Politica e Geopolitica": ["politica", "geopolitica", "politica e geopolitica", "educazione civica"],
-        "Economia e Finanza": ["economia", "finanza", "economia e finanza"],
-        "Tecnologia ed Elettronica": ["tecnologia", "elettronica", "tecnologia ed elettronica"],
-        "Musica e Industria Musicale": ["musica", "industria musicale", "musica e industria musicale"],
-    }
     extra_aliases = DISCIPLINE_DIR_ALIASES.get(discipline_name, [])
     for ea in extra_aliases:
         discipline_keywords.append(ea.lower())
@@ -2905,7 +2932,7 @@ def build_moc_operational_prompt(
                 "> 1. **Gerarchia Ferrea:** I moduli didattici, le notazioni e i percorsi del docente estratti comandano al 100%. In caso di contrasto di impostazione o sequenza, vince il NotebookLM.\n"
                 "> 2. **Ruolo della Conoscenza di Base nel MOC:**\n"
                 ">    - **Colmare buchi didattici d'esame:** Sei autorizzato a colmare eventuali buchi logici tra una lezione e l'altra del professore o omissioni dell'indice, garantendo che la sequenza propedeutica per preparare l'esame sia completa al 100%.\n"
-                ">    - **Propedeuticità e Raccordi:** Esplicita i ponti logici e i collegamenti propedeutici tra i moduli, inserendo i wikilink dedicati a tutti i concetti e metodi necessari.\n"
+                ">    - **Propedeuticità e Raccordi:** Esplicita i ponti logici e i collegamenti propedeutici tra i moduli, inserendo collegamenti solo tra concetti realmente correlati, anche verso altre materie solo se pertinenti.\n"
             )
         prompt_lines.append("")
         prompt_lines.append("### 1. Leggi con una Sola Chiamata le Istruzioni Compilate")
@@ -2914,7 +2941,7 @@ def build_moc_operational_prompt(
             "  Focalizzati tassativamente sulla **Legge 4 (Filosofia dei MOC)** e sulla **Legge 11 (Sintesi Multi-Fonte Cross-Notebook)**:\n"
             "  * Il MOC deve essere **sempre discorsivo e narrativo**, spiegando nel testo *perché* i concetti si collegano tra loro.\n"
             "  * Struttura gerarchica a 3 livelli: Macro-MOC, Sub-MOC, Note Atomiche.\n"
-            "  * **Legge 11 (Fusione Organica):** Non creare blocchi separati per ciascun notebook. Devi fondere organicamente i moduli, evidenziando correlazioni interdisciplinari e convergenze.\n"
+            "  * **Legge 11 (Fusione Organica):** Non creare blocchi separati per ciascun notebook. Devi fondere organicamente i moduli, creando collegamenti solo tra concetti realmente correlati, anche verso altre materie solo se pertinenti.\n"
             "  * Divieto assoluto di elenchi puntati sterili o asettici.\n"
         )
         prompt_lines.append("### 2. Estrai, Analizza e Fondi l'Architettura Concettuale da Tutti i NotebookLM")
@@ -2941,7 +2968,7 @@ def build_moc_operational_prompt(
                 "- **Nessun indice allegato:** il perimetro è l'intero notebook. Organizza i moduli seguendo l'indice generale estratto da NotebookLM (non l'elenco dei documenti).\n"
             )
         prompt_lines.append(
-            "- **Copertura:** dentro il perimetro, ogni concetto, teorema e metodo trattato dalle fonti ha il suo `[[wikilink]]`, immerso nella narrazione che collega i moduli.\n"
+            "- **Copertura:** dentro il perimetro, i concetti e i metodi trattati dalle fonti sono collegati solo quando esiste una relazione concettuale reale.\n"
         )
         prompt_lines.append("")
         prompt_lines.append("### 3. Incrocia la Mappa con l'Indice del Vault (`vault-index.json`)")
@@ -4396,6 +4423,71 @@ def post_process_job(vault_root: Path, job_file: Path) -> int:
     return 0
 
 
+def _ascii_slug(name: str) -> str:
+    import unicodedata
+    value = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii").lower()
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", value)).strip("-") or "disciplina"
+
+def create_discipline_scaffold(vault_root: Path, name: str, pole: str, emoji: str) -> dict:
+    slug = _ascii_slug(name)
+    entry = {"name": name, "slug": slug, "pole": pole, "emoji": emoji or "📚", "aliases": []}
+    profile_dir = vault_root / ".antigravity" / "disciplines"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    profile = profile_dir / f"{slug}.md"
+    if not profile.exists():
+        profile.write_text(f"# {name}\n\n## Scopo\nOrganizzare e approfondire i concetti essenziali di {name}.\n\n## Struttura delle note\nLe note sviluppano un Concetto e il relativo Metodo quando utile.\n", encoding="utf-8")
+    moc_dir = vault_root / "01 MOC's"
+    moc_dir.mkdir(parents=True, exist_ok=True)
+    moc = moc_dir / f"{name} MOC.md"
+    if not moc.exists():
+        moc.write_text(f"---\nDisciplina: {name}\nType: [MOC]\n---\n\n# {name} MOC\n\nMappa dei concetti e dei percorsi di studio di {name}.\n", encoding="utf-8")
+    folder = vault_root / name
+    folder.mkdir(parents=True, exist_ok=True)
+    register_discipline(vault_root, entry)
+    DISCIPLINE_SLUG_MAP[name] = slug
+    DISCIPLINE_DIR_ALIASES[name] = []
+    return entry
+
+def resolve_auto_discipline(vault_root: Path, job_data: dict) -> dict:
+    entries = load_disciplines(vault_root)
+    topic = str(job_data.get("topic") or job_data.get("title") or "")
+    notebooks = extract_notebooks_list(job_data.get("source", {}), job_data)
+    files = []
+    def collect(value):
+        if isinstance(value, str) and ("/" in value or value.lower().endswith((".pdf", ".md", ".txt"))): files.append(Path(value).name)
+        elif isinstance(value, dict):
+            for k,v in value.items():
+                if k in {"value", "path", "files", "file", "sources"}: collect(v)
+        elif isinstance(value, list):
+            for v in value: collect(v)
+    collect(job_data.get("source", {})); collect(job_data.get("syllabus_files", []))
+    schema = {"type":"object","properties":{"match":{"type":["string","null"]},"new_name":{"type":["string","null"]},"pole":{"type":"string","enum":["università","personale"]},"emoji":{"type":"string"},"confidence":{"type":"number"}},"required":["match","new_name","pole","emoji","confidence"],"additionalProperties":False}
+    prompt = ("Classifica l'argomento per un vault personale. Scegli una materia esistente SOLO se l'argomento le appartiene davvero; altrimenti proponi un nome nuovo, breve, in italiano, Title Case. "
+        f"Argomento: {topic}\nTitoli NotebookLM: {[n.get('title') for n in notebooks]}\nFile fonti locali: {files}\nMaterie: {[e['name'] for e in entries]}\n"
+        "Restituisci match valorizzato solo se esattamente uno dei nomi elencati; in caso contrario new_name.")
+    result = run_agy_structured(prompt, schema, timeout_sec=180, effort="low")
+    entry = None
+    if result:
+        match = result.get("match")
+        entry = next((e for e in entries if e["name"].lower() == str(match or "").strip().lower()), None)
+        if not entry and result.get("new_name"):
+            name = str(result["new_name"]).strip()
+            if name: entry = create_discipline_scaffold(vault_root, name, result.get("pole", "personale"), result.get("emoji", "📚"))
+    if not entry:
+        haystack = (topic + " " + " ".join(files) + " " + " ".join(n.get("title", "") for n in notebooks)).lower()
+        entry = next((e for e in entries if any(x.lower() in haystack for x in [e["name"], *e.get("aliases", [])] if x)), None)
+    if not entry:
+        raise RuntimeError("Impossibile rilevare o creare la materia: classificatore non disponibile e nessun nome/alias del registro compare nell'argomento.")
+    name = entry["name"]
+    for key in ("discipline", "disciplina"): job_data[key] = name
+    job_data["pole"] = entry.get("pole", "personale")
+    def replace(v):
+        if isinstance(v, str): return v.replace("__auto__", name) if v.startswith("__auto__/") else v
+        if isinstance(v, list): return [replace(x) for x in v]
+        if isinstance(v, dict): return {k:replace(x) for k,x in v.items()}
+        return v
+    return entry
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Orchestratore principale Antigravity per Obsidian Vault.",
@@ -4569,6 +4661,23 @@ def main() -> int:
         return 1
 
     discipline_name = job_data.get("discipline", "")
+    if discipline_name == "__auto__":
+        try:
+            chosen = resolve_auto_discipline(vault_root, job_data)
+            discipline_name = chosen["name"]
+            def replace_auto(value):
+                if isinstance(value, str): return value.replace("__auto__", discipline_name) if value.startswith("__auto__/") or "/__auto__/" in value else value
+                if isinstance(value, list): return [replace_auto(v) for v in value]
+                if isinstance(value, dict): return {k: replace_auto(v) for k, v in value.items()}
+                return value
+            job_data = replace_auto(job_data)
+            job_file.write_text(json.dumps(job_data, indent=2, ensure_ascii=False), encoding="utf-8")
+            update_status(vault_root=vault_root, percent=0, step_number=0, total_steps=6, message=f"Materia rilevata: {discipline_name}", detail=f"Polo: {chosen.get('pole')}", status="running")
+        except Exception as e:
+            msg = f"Risoluzione automatica della materia non riuscita: {e}"
+            update_status(vault_root=vault_root, percent=0, step_number=0, total_steps=6, message="Materia automatica non risolta", detail=msg, status="error", error=msg)
+            sys.stderr.write(msg + "\n")
+            return 1
     op_type = job_data.get("operation_type") or job_data.get("operation", "normal")
     topic_str = job_data.get("topic", "Senza Titolo")
 

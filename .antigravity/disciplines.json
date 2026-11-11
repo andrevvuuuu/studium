@@ -1,0 +1,24 @@
+{
+  "disciplines": [
+    {"name":"Matematica","slug":"matematica","pole":"università","emoji":"🎓","aliases":[]},
+    {"name":"Informatica","slug":"informatica","pole":"università","emoji":"🎓","aliases":[]},
+    {"name":"Fisica","slug":"fisica","pole":"università","emoji":"🎓","aliases":[]},
+    {"name":"Intelligenza Artificiale","slug":"intelligenza-artificiale","pole":"università","emoji":"🎓","aliases":[]},
+    {"name":"Neuroscienze","slug":"neuroscienze","pole":"università","emoji":"🎓","aliases":["neuroscienze","biologia e neuroscienze"]},
+    {"name":"Biologia","slug":"biologia","pole":"università","emoji":"🎓","aliases":["biologia","biologia e neuroscienze"]},
+    {"name":"Bodybuilding","slug":"bodybuilding","pole":"personale","emoji":"🏋️","aliases":[]},
+    {"name":"Nutrizione e Salute","slug":"nutrizione-e-salute","pole":"personale","emoji":"🥗","aliases":[]},
+    {"name":"Chimica","slug":"chimica","pole":"personale","emoji":"🧪","aliases":[]},
+    {"name":"Droghe","slug":"droghe","pole":"personale","emoji":"💊","aliases":[]},
+    {"name":"Tecnologia ed Elettronica","slug":"tecnologia-ed-elettronica","pole":"personale","emoji":"💻","aliases":["tecnologia","elettronica","tecnologia ed elettronica"]},
+    {"name":"Musica e Industria Musicale","slug":"musica-e-industria-musicale","pole":"personale","emoji":"🎵","aliases":["musica","industria musicale","musica e industria musicale"]},
+    {"name":"Arte e Storia dell'Arte","slug":"arte-e-storia-dellarte","pole":"personale","emoji":"🎨","aliases":["arte","storia dell'arte"]},
+    {"name":"Filosofia","slug":"filosofia","pole":"personale","emoji":"🏛️","aliases":[]},
+    {"name":"Letteratura","slug":"letteratura","pole":"personale","emoji":"📚","aliases":["letteratura","letteratura inglese"]},
+    {"name":"Analisi Narrativa","slug":"analisi-narrativa","pole":"personale","emoji":"✍️","aliases":[]},
+    {"name":"Storia","slug":"storia","pole":"personale","emoji":"📜","aliases":["storia","storiа"]},
+    {"name":"Politica e Geopolitica","slug":"politica-e-geopolitica","pole":"personale","emoji":"🌐","aliases":["politica","geopolitica","politica e geopolitica","educazione civica"]},
+    {"name":"Economia e Finanza","slug":"economia-e-finanza","pole":"personale","emoji":"📈","aliases":["economia","finanza","economia e finanza"]},
+    {"name":"Psicologia","slug":"psicologia","pole":"personale","emoji":"🧠","aliases":[]}
+  ]
+}

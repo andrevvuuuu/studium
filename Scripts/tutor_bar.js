@@ -1,5 +1,5 @@
 /**
- * tutor_bar.js — Scheda permanente del tutor delle lezioni nella Right Sidebar di Obsidian.
+ * tutor_bar.js — Scheda permanente del tutor delle lezioni nella colonna sinistra, in basso, di Obsidian.
  *
  * Riprende fedelmente il design system dell'HUD di Antigravity:
  * vetro smerigliato, barra capsulare a segmenti, chip a pillola e marcatori di stato.
@@ -169,6 +169,7 @@ function createTutorViewClass(obsidianApi) {
         getIcon() { return TUTOR_ICON_ID; }
 
         async onOpen() {
+            try { require(path.join(this.vaultBasePath, "Scripts", "ag_style.js"))(); } catch (_) {}
             try { this.addAction("refresh-cw", "Aggiorna tutor", () => this.renderContent()); } catch (_) {}
             try {
                 this.addAction("sliders", "Menu Antigravity", async () => {
@@ -187,7 +188,6 @@ function createTutorViewClass(obsidianApi) {
         async onClose() {}
 
         renderContent() {
-            try { require(path.join(this.vaultBasePath, "Scripts", "ag_style.js"))(); } catch (_) {}
             const container = this.contentEl;
             if (!container) return;
             if (typeof container.empty === "function") container.empty();
@@ -411,14 +411,9 @@ function registerViewAndIcon(app, obsidianApi) {
     if (obs?.addIcon) {
         try { obs.addIcon(TUTOR_ICON_ID, TUTOR_ICON_SVG); } catch (_) {}
     }
-    if (app?.viewRegistry) {
+    if (app?.viewRegistry && !app.viewRegistry.getViewCreatorByType(VIEW_TYPE_TUTOR)) {
         const ViewClass = getTutorViewClass(obs);
-        try {
-            if (app.viewRegistry.getViewCreatorByType(VIEW_TYPE_TUTOR)) {
-                app.viewRegistry.unregisterView(VIEW_TYPE_TUTOR);
-            }
-            app.viewRegistry.registerView(VIEW_TYPE_TUTOR, (leaf) => new ViewClass(leaf));
-        } catch (_) {}
+        try { app.viewRegistry.registerView(VIEW_TYPE_TUTOR, (leaf) => new ViewClass(leaf)); } catch (_) {}
     }
 }
 
@@ -428,77 +423,70 @@ function registerPluginView(plugin, obsidianApi) {
         try { obs.addIcon(TUTOR_ICON_ID, TUTOR_ICON_SVG); } catch (_) {}
     }
     const ViewClass = getTutorViewClass(obs);
-    if (plugin?.app?.viewRegistry?.getViewCreatorByType(VIEW_TYPE_TUTOR)) {
-        try { plugin.app.viewRegistry.unregisterView(VIEW_TYPE_TUTOR); } catch (_) {}
-    }
     if (plugin?.registerView) {
-        try {
-            plugin.registerView(VIEW_TYPE_TUTOR, (leaf) => new ViewClass(leaf));
-        } catch (_) {
-            registerViewAndIcon(plugin.app, obs);
-        }
+        try { plugin.registerView(VIEW_TYPE_TUTOR, (leaf) => new ViewClass(leaf)); } catch (_) {}
     } else {
         registerViewAndIcon(plugin?.app, obs);
     }
 }
 
+async function ensureLeftBottomLeaf(app) {
+    const workspace = app?.workspace;
+    if (!workspace) return null;
+    const tutorLeaves = [];
+    workspace.iterateAllLeaves?.((leaf) => {
+        if (leaf.getViewState?.()?.type === VIEW_TYPE_TUTOR) tutorLeaves.push(leaf);
+    });
+    const deferredLeaves = new Map();
+    for (const leaf of tutorLeaves) {
+        const wasDeferred = !!leaf.isDeferred;
+        if (wasDeferred) {
+            try { await leaf.loadIfDeferred?.(); } catch (_) {}
+        }
+        deferredLeaves.set(leaf, wasDeferred);
+    }
+    let leftLeaf = null;
+    for (const leaf of tutorLeaves) {
+        if (leaf.getRoot?.() === workspace.rightSplit) {
+            try { leaf.detach(); } catch (_) {}
+        } else if (!leftLeaf && leaf.getRoot?.() === workspace.leftSplit &&
+            (deferredLeaves.get(leaf) || (leaf.view && typeof leaf.view.renderContent === "function"))) {
+            leftLeaf = leaf;
+        } else {
+            try { leaf.detach(); } catch (_) {}
+        }
+    }
+    if (!leftLeaf) {
+        const explorerLeaf = workspace.getLeavesOfType?.("file-explorer")?.[0];
+        try {
+            leftLeaf = explorerLeaf && workspace.createLeafBySplit
+                ? workspace.createLeafBySplit(explorerLeaf, "horizontal")
+                : workspace.getLeftLeaf?.(true);
+        } catch (_) {
+            leftLeaf = workspace.getLeftLeaf?.(true);
+        }
+        if (leftLeaf) await leftLeaf.setViewState({ type: VIEW_TYPE_TUTOR, active: false });
+    }
+    if (leftLeaf) {
+        try { leftLeaf.setPinned(true); } catch (_) {}
+    }
+    return leftLeaf;
+}
+
 /**
  * Funzione principale esportata, invocata da tutor_startup.js e da Prompts/Tutor Mostra.md.
  */
-async function render(app, vaultBasePath) {
-    // Rimuove eventuale vecchio elemento flottante dal DOM
-    if (typeof document !== "undefined") {
-        document.getElementById("ag-tutor")?.remove();
-    }
+async function render(app, vaultBasePath, { reveal = false } = {}) {
+    if (typeof document !== "undefined") document.getElementById("ag-tutor")?.remove();
 
-    registerViewAndIcon(app);
+    const pluginActive = !!app?.plugins?.plugins?.["antigravity-tutor"];
+    if (!pluginActive) registerViewAndIcon(app);
 
-    // Auto-espansione della barra laterale destra se collassata
-    if (app?.workspace?.rightSplit && app.workspace.rightSplit.collapsed) {
-        try { app.workspace.rightSplit.expand(); } catch (_) {}
-    }
+    const leaf = await ensureLeftBottomLeaf(app);
+    if (!leaf) return;
+    if (typeof leaf.view?.renderContent === "function") leaf.view.renderContent();
+    if (reveal) await app?.workspace?.revealLeaf?.(leaf);
 
-    // Rimuove eventuali schede "fantasma" rimaste bloccate con l'errore "plugin non disponibile"
-    const toDetach = [];
-    let targetLeaf = null;
-    app?.workspace?.iterateAllLeaves?.((leaf) => {
-        if (leaf.getViewState()?.type === VIEW_TYPE_TUTOR) {
-            const isTutorView = leaf.view && typeof leaf.view.renderContent === "function";
-            if (!isTutorView) {
-                toDetach.push(leaf);
-            } else {
-                if (targetLeaf) {
-                    toDetach.push(leaf);
-                } else {
-                    targetLeaf = leaf;
-                }
-            }
-        }
-    });
-    for (const leaf of toDetach) {
-        try { leaf.detach(); } catch (_) {}
-    }
-
-    if (targetLeaf) {
-        try { targetLeaf.setPinned(true); } catch (_) {}
-        if (typeof targetLeaf.view?.renderContent === "function") {
-            targetLeaf.view.renderContent();
-        }
-        await app?.workspace?.revealLeaf?.(targetLeaf);
-    } else if (app?.workspace?.getRightLeaf) {
-        const leaf = app.workspace.getRightLeaf(false);
-        if (leaf) {
-            try { leaf.setPinned(true); } catch (_) {}
-            await leaf.setViewState({
-                type: VIEW_TYPE_TUTOR,
-                active: true
-            });
-            if (typeof leaf.view?.renderContent === "function") {
-                leaf.view.renderContent();
-            }
-            await app.workspace.revealLeaf(leaf);
-        }
-    }
 }
 
 module.exports = render;

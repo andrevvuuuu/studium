@@ -28,10 +28,11 @@ module.exports = async function (tp) {
     } catch (e) {
         console.log("[tutor] avvio non riuscito", e);
     }
-    render(app, vaultBasePath);
+    const pluginActive = !!app.plugins?.plugins?.["antigravity-tutor"];
+    if (!pluginActive) render(app, vaultBasePath);
     if (window._agTutorWatching) return;
     window._agTutorWatching = true;
-    fs.watchFile(statePath, { interval: 2000 }, () => render(app, vaultBasePath));
+    if (!pluginActive) fs.watchFile(statePath, { interval: 2000 }, () => render(app, vaultBasePath));
     // Quando un batch o una modifica di Antigravity finisce, lo stato si riallinea ai file (nessuna AI)
     const runtime = process.env.ANTIGRAVITY_RUNTIME_DIR || "/tmp/antigravity_runtime";
     for (const f of ["batch-status.json", "job-status.json"]) {

@@ -861,8 +861,13 @@ function renderProgressHud(app, vaultBasePath, targetFilePath, topicTitle, child
             <button class="ag-hud-btn ag-hud-cancel is-destructive">Annulla</button>
         </div>`;
     const q = sel => hudEl.querySelector(sel);
-    q(".ag-hud-title").textContent = noteTitle;
     const setSubtitle = rel => {
+        if (rel && rel.startsWith("__auto__/")) {
+            q(".ag-hud-title").textContent = "✨ Materia in rilevamento…";
+            q(".ag-hud-sub").textContent = noteTitle;
+            return;
+        }
+        q(".ag-hud-title").textContent = noteTitle;
         // Mostra solo corso e modulo (le ultime due cartelle), non l'intero percorso
         const dirs = rel ? path.dirname(rel).split("/").filter(d => d && d !== ".") : [];
         q(".ag-hud-sub").textContent = dirs.length ? `${opLabel} in ${dirs.slice(-2).join(" › ")}` : opLabel;
@@ -1133,9 +1138,928 @@ function launchBackgroundJob(app, vaultBasePath, jobData) {
     renderProgressHud(app, vaultBasePath, jobData.target_file_path, jobData.topic || jobData.title || "Nota Antigravity", childPid, jobData);
 }
 
-// Helper: Selettore interattivo unificato per fonti esterne
-async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Passo 4/8: Seleziona la Fonte:", discipline = "") {
-    // Bodybuilding: il motore delle evidenze cerca e analizza gli studi sull'argomento (anche insieme alle altre fonti)
+function ensureAgStyle(vaultBasePath) {
+    try {
+        const bp = vaultBasePath || (window.app && window.app.vault && window.app.vault.adapter && window.app.vault.adapter.basePath);
+        if (bp) {
+            require(path.join(bp, "Scripts", "ag_style.js"))();
+        } else if (typeof injectHudStyle === "function") {
+            injectHudStyle();
+        }
+    } catch (_) {}
+}
+
+function openDisciplinePickerModal(app, options) {
+    const opts = options || {};
+    const title = opts.title || "Seleziona la Disciplina";
+    const disciplines = Array.isArray(opts.disciplines) ? opts.disciplines : [];
+    const current = opts.current || null;
+
+    ensureAgStyle();
+
+    return new Promise((resolve) => {
+        let submitted = false;
+
+        const modalContainer = document.createElement("div");
+        modalContainer.className = "modal-container mod-dim ag-picker-backdrop";
+
+        const modalBg = document.createElement("div");
+        modalBg.className = "modal-bg";
+        modalContainer.appendChild(modalBg);
+
+        const modalEl = document.createElement("div");
+        modalEl.className = "modal ag-picker ag-picker-discipline";
+        modalContainer.appendChild(modalEl);
+
+        // Header
+        const headerEl = document.createElement("div");
+        headerEl.className = "ag-picker-header";
+        headerEl.innerHTML = `
+            <div class="ag-picker-title-row">
+                <h2 class="ag-picker-title">${escapeHtml(title)}</h2>
+            </div>
+            <p class="ag-picker-subtitle">Seleziona la materia o lascia che Antigravity la rilevi automaticamente</p>
+            <div class="ag-picker-close-btn" role="button" aria-label="Chiudi" title="Chiudi">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </div>
+        `;
+        modalEl.appendChild(headerEl);
+
+        // Card in evidenza: Rileva o crea automaticamente
+        const autoCard = document.createElement("div");
+        autoCard.className = "ag-picker-card ag-picker-card-featured";
+        autoCard.setAttribute("tabindex", "0");
+        autoCard.setAttribute("role", "button");
+        autoCard.innerHTML = `
+            <div class="ag-picker-card-icon">✨</div>
+            <div class="ag-picker-card-content">
+                <div class="ag-picker-card-name">✨ Rileva o crea automaticamente</div>
+                <div class="ag-picker-card-desc">Analizza le fonti: usa una materia esistente o ne crea una nuova (cartella, profilo, MOC)</div>
+            </div>
+        `;
+        modalEl.appendChild(autoCard);
+
+        // Campo di ricerca
+        const searchWrap = document.createElement("div");
+        searchWrap.className = "ag-picker-search-wrap";
+        searchWrap.innerHTML = `<input type="search" class="ag-picker-input ag-picker-search" placeholder="Cerca materia..." aria-label="Cerca materia">`;
+        modalEl.appendChild(searchWrap);
+        const searchInput = searchWrap.querySelector("input");
+
+        // Contenitore gruppi
+        const groupsContainer = document.createElement("div");
+        groupsContainer.className = "ag-picker-groups-container";
+        modalEl.appendChild(groupsContainer);
+
+        const uniGroupEl = document.createElement("div");
+        uniGroupEl.className = "ag-picker-group";
+        uniGroupEl.innerHTML = `
+            <div class="ag-picker-section-label">Università</div>
+            <div class="ag-picker-chips-grid ag-picker-uni-chips"></div>
+        `;
+
+        const persGroupEl = document.createElement("div");
+        persGroupEl.className = "ag-picker-group";
+        persGroupEl.innerHTML = `
+            <div class="ag-picker-section-label">Personale</div>
+            <div class="ag-picker-chips-grid ag-picker-pers-chips"></div>
+        `;
+
+        const noResultsEl = document.createElement("div");
+        noResultsEl.className = "ag-picker-empty-state";
+        noResultsEl.textContent = "Nessuna materia corrispondente alla ricerca";
+        noResultsEl.style.display = "none";
+
+        groupsContainer.appendChild(uniGroupEl);
+        groupsContainer.appendChild(persGroupEl);
+        groupsContainer.appendChild(noResultsEl);
+
+        const uniChipsEl = uniGroupEl.querySelector(".ag-picker-uni-chips");
+        const persChipsEl = persGroupEl.querySelector(".ag-picker-pers-chips");
+
+        const chipElements = [];
+
+        const cleanup = () => {
+            document.removeEventListener("keydown", handleKeydown, true);
+            if (modalContainer.parentNode) {
+                modalContainer.parentNode.removeChild(modalContainer);
+            }
+        };
+
+        const selectItem = (disc) => {
+            submitted = true;
+            cleanup();
+            resolve(disc);
+        };
+
+        const createChip = (disc, parent) => {
+            const chip = document.createElement("div");
+            chip.className = "ag-picker-chip";
+            chip.setAttribute("tabindex", "0");
+            chip.setAttribute("role", "button");
+            const isCur = current && (current === disc.name || (current.name && current.name === disc.name));
+            if (isCur) chip.classList.add("is-selected");
+            chip.innerHTML = `
+                <span class="ag-picker-chip-emoji">${disc.emoji || "📚"}</span>
+                <span class="ag-picker-chip-name">${escapeHtml(disc.name)}</span>
+            `;
+            chip.onclick = () => selectItem(disc);
+            chip.onkeydown = (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectItem(disc);
+                }
+            };
+            parent.appendChild(chip);
+            chipElements.push({ el: chip, disc });
+        };
+
+        const uniList = disciplines.filter(d => (d.pole || "").toLowerCase().startsWith("universit"));
+        const persList = disciplines.filter(d => !(d.pole || "").toLowerCase().startsWith("universit"));
+
+        uniList.forEach(d => createChip(d, uniChipsEl));
+        persList.forEach(d => createChip(d, persChipsEl));
+
+        if (!uniList.length) uniGroupEl.style.display = "none";
+        if (!persList.length) persGroupEl.style.display = "none";
+
+        const filterItems = (query) => {
+            const q = query.trim().toLowerCase();
+            let visibleUni = 0;
+            let visiblePers = 0;
+
+            for (const item of chipElements) {
+                const match = !q || item.disc.name.toLowerCase().includes(q) || (item.disc.pole || "").toLowerCase().includes(q);
+                item.el.style.display = match ? "inline-flex" : "none";
+                if (match) {
+                    if ((item.disc.pole || "").toLowerCase().startsWith("universit")) visibleUni++;
+                    else visiblePers++;
+                }
+            }
+
+            uniGroupEl.style.display = visibleUni > 0 ? "" : "none";
+            persGroupEl.style.display = visiblePers > 0 ? "" : "none";
+
+            const autoMatch = !q || "rileva o crea automaticamente auto".includes(q);
+            autoCard.style.display = autoMatch ? "flex" : "none";
+
+            noResultsEl.style.display = (visibleUni === 0 && visiblePers === 0 && !autoMatch) ? "block" : "none";
+        };
+
+        searchInput.addEventListener("input", (e) => filterItems(e.target.value));
+
+        const autoObj = { name: "__auto__", pole: "", label: "✨ Rileva o crea la materia automaticamente" };
+        autoCard.onclick = () => selectItem(autoObj);
+        autoCard.onkeydown = (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                selectItem(autoObj);
+            }
+        };
+
+        const getNavigableList = () => {
+            const list = [];
+            if (autoCard.style.display !== "none") list.push(autoCard);
+            for (const item of chipElements) {
+                if (item.el.style.display !== "none") list.push(item.el);
+            }
+            return list;
+        };
+
+        const handleKeydown = (e) => {
+            if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                cleanup();
+                if (!submitted) resolve(null);
+                return;
+            }
+
+            if (e.key === "Enter") {
+                if (document.activeElement === searchInput) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const q = searchInput.value.trim().toLowerCase();
+                    const firstChip = chipElements.find(c => c.el.style.display !== "none");
+                    if (q && firstChip) {
+                        selectItem(firstChip.disc);
+                    } else if (autoCard.style.display !== "none") {
+                        selectItem(autoObj);
+                    } else if (firstChip) {
+                        selectItem(firstChip.disc);
+                    }
+                }
+            } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+                const nav = getNavigableList();
+                if (document.activeElement === searchInput) {
+                    if (nav.length) {
+                        e.preventDefault();
+                        nav[0].focus();
+                    }
+                } else {
+                    const idx = nav.indexOf(document.activeElement);
+                    if (idx >= 0 && idx < nav.length - 1) {
+                        e.preventDefault();
+                        nav[idx + 1].focus();
+                    }
+                }
+            } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+                const nav = getNavigableList();
+                const idx = nav.indexOf(document.activeElement);
+                if (idx > 0) {
+                    e.preventDefault();
+                    nav[idx - 1].focus();
+                } else if (idx === 0) {
+                    e.preventDefault();
+                    searchInput.focus();
+                }
+            }
+        };
+
+        headerEl.querySelector(".ag-picker-close-btn").onclick = () => {
+            cleanup();
+            if (!submitted) resolve(null);
+        };
+
+        modalBg.onclick = () => {
+            cleanup();
+            if (!submitted) resolve(null);
+        };
+
+        document.addEventListener("keydown", handleKeydown, true);
+        document.body.appendChild(modalContainer);
+        setTimeout(() => searchInput.focus(), 60);
+    });
+}
+
+function openSourcePickerModal(app, options) {
+    const opts = options || {};
+    const title = opts.title || "Seleziona la Fonte";
+    const step = opts.step || "";
+    const vaultBasePath = opts.vaultBasePath || (app && app.vault && app.vault.adapter && app.vault.adapter.basePath) || "";
+
+    let discName = "";
+    if (opts.discipline) {
+        discName = (typeof opts.discipline === "object" && opts.discipline !== null) ? (opts.discipline.name || "") : String(opts.discipline);
+    }
+    const withStudies = discName === "Bodybuilding";
+
+    const defaultTypes = [
+        "notebooklm",
+        "youtube",
+        "web",
+        "local_files",
+        ...(withStudies ? ["studies"] : [])
+    ];
+    const allowedTypes = Array.isArray(opts.allowedTypes) && opts.allowedTypes.length ? opts.allowedTypes : defaultTypes;
+    let activeType = allowedTypes[0] || "notebooklm";
+
+    ensureAgStyle(vaultBasePath);
+
+    return new Promise((resolve) => {
+        let submitted = false;
+
+        const validNotebooks = Array.isArray(opts.notebooks) ? [...opts.notebooks.filter(nb => nb && nb.id)] : [];
+        let selectedNotebooks = [];
+        let notebookSearchQuery = "";
+        let youtubeUrl = "";
+        let webUrl = "";
+        let pickedFiles = [];
+        let allowBaseKnowledge = opts.preselectedKnowledge === true ? true : false;
+        const hideKnowledgeSection = (opts.preselectedKnowledge === false);
+
+        const modalContainer = document.createElement("div");
+        modalContainer.className = "modal-container mod-dim ag-picker-backdrop";
+
+        const modalBg = document.createElement("div");
+        modalBg.className = "modal-bg";
+        modalContainer.appendChild(modalBg);
+
+        const modalEl = document.createElement("div");
+        modalEl.className = "modal ag-picker";
+        modalContainer.appendChild(modalEl);
+
+        // 1. Header
+        const headerEl = document.createElement("div");
+        headerEl.className = "ag-picker-header";
+
+        let subText = "";
+        if (discName === "__auto__") {
+            subText = "✨ Materia automatica";
+        } else if (discName) {
+            subText = `Materia: ${discName}`;
+        }
+
+        headerEl.innerHTML = `
+            <div class="ag-picker-title-row">
+                <h2 class="ag-picker-title">${escapeHtml(title)}</h2>
+                ${step ? `<span class="ag-picker-step-chip">${escapeHtml(step)}</span>` : ""}
+            </div>
+            ${subText ? `<p class="ag-picker-subtitle">${escapeHtml(subText)}</p>` : ""}
+            <div class="ag-picker-close-btn" role="button" aria-label="Chiudi" title="Chiudi">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </div>
+        `;
+        modalEl.appendChild(headerEl);
+
+        // 2. Sezione 1: Tipo di fonte
+        const section1El = document.createElement("div");
+        section1El.className = "ag-picker-section ag-picker-section-types";
+        section1El.innerHTML = `
+            <div class="ag-picker-section-label">Tipo di fonte</div>
+            <div class="ag-picker-grid" role="radiogroup" aria-label="Tipo di fonte"></div>
+        `;
+        modalEl.appendChild(section1El);
+
+        if (allowedTypes.length <= 1) {
+            section1El.style.display = "none";
+        }
+
+        const cardsGrid = section1El.querySelector(".ag-picker-grid");
+        const cardDefs = [
+            {
+                type: "notebooklm",
+                icon: "🧠",
+                name: "NotebookLM",
+                desc: withStudies ? "NotebookLM + studi scientifici cercati in automatico" : "Note e documenti caricati su NotebookLM"
+            },
+            {
+                type: "youtube",
+                icon: "🎥",
+                name: "Video YouTube",
+                desc: "Trascrizione e analisi da link YouTube"
+            },
+            {
+                type: "web",
+                icon: "🌐",
+                name: "Sito Online",
+                desc: "Analisi ed estrazione contenuti da pagina web"
+            },
+            {
+                type: "local_files",
+                icon: "📚",
+                name: "File Locali",
+                desc: "Documenti PDF, Markdown o file di testo"
+            },
+            ...(withStudies ? [{
+                type: "studies",
+                icon: "🔬",
+                name: "Solo studi scientifici",
+                desc: "L'AI cerca, legge e valuta gli studi sull'argomento"
+            }] : [])
+        ];
+
+        const cardElements = {};
+        for (const def of cardDefs) {
+            if (!allowedTypes.includes(def.type)) continue;
+            const card = document.createElement("div");
+            card.className = "ag-picker-card" + (def.type === activeType ? " is-selected" : "");
+            card.setAttribute("role", "radio");
+            card.setAttribute("aria-checked", def.type === activeType ? "true" : "false");
+            card.setAttribute("tabindex", "0");
+            card.innerHTML = `
+                <div class="ag-picker-card-icon">${def.icon}</div>
+                <div class="ag-picker-card-name">${escapeHtml(def.name)}</div>
+                <div class="ag-picker-card-desc">${escapeHtml(def.desc)}</div>
+            `;
+            card.onclick = () => switchActiveType(def.type);
+            card.onkeydown = (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    switchActiveType(def.type);
+                } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                    e.preventDefault();
+                    const curIdx = allowedTypes.indexOf(def.type);
+                    const nextType = allowedTypes[(curIdx + 1) % allowedTypes.length];
+                    if (cardElements[nextType]) {
+                        switchActiveType(nextType);
+                        cardElements[nextType].focus();
+                    }
+                } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                    e.preventDefault();
+                    const curIdx = allowedTypes.indexOf(def.type);
+                    const prevType = allowedTypes[(curIdx - 1 + allowedTypes.length) % allowedTypes.length];
+                    if (cardElements[prevType]) {
+                        switchActiveType(prevType);
+                        cardElements[prevType].focus();
+                    }
+                }
+            };
+            cardsGrid.appendChild(card);
+            cardElements[def.type] = card;
+        }
+
+        // 3. Sezione 2: Contestuale
+        const contextualSectionEl = document.createElement("div");
+        contextualSectionEl.className = "ag-picker-section ag-picker-section-contextual";
+        contextualSectionEl.innerHTML = `
+            <div class="ag-picker-section-label ag-picker-contextual-label">Dettagli fonte</div>
+            <div class="ag-picker-contextual"></div>
+        `;
+        modalEl.appendChild(contextualSectionEl);
+        const contextualEl = contextualSectionEl.querySelector(".ag-picker-contextual");
+
+        // 4. Sezione 3: Conoscenza AI (Segmented control)
+        const knowledgeSectionEl = document.createElement("div");
+        knowledgeSectionEl.className = "ag-picker-section ag-picker-knowledge-section";
+        knowledgeSectionEl.innerHTML = `
+            <div class="ag-picker-section-label">Modalità Conoscenza per NotebookLM</div>
+            <div class="ag-picker-segmented" role="radiogroup" aria-label="Modalità conoscenza">
+                <button type="button" class="ag-picker-segment ${!allowBaseKnowledge ? 'is-selected' : ''}" role="radio" aria-checked="${!allowBaseKnowledge}">
+                    <span class="ag-picker-seg-title">🔒 1. Solo NotebookLM</span>
+                    <span class="ag-picker-seg-sub">Esclusivo — Zero conoscenza esterna</span>
+                </button>
+                <button type="button" class="ag-picker-segment ${allowBaseKnowledge ? 'is-selected' : ''}" role="radio" aria-checked="${allowBaseKnowledge}">
+                    <span class="ag-picker-seg-title">🧠+🌐 2. NotebookLM + AI</span>
+                    <span class="ag-picker-seg-sub">Fonte primaria + Conoscenza interna AI</span>
+                </button>
+            </div>
+        `;
+        modalEl.appendChild(knowledgeSectionEl);
+
+        const segButtons = knowledgeSectionEl.querySelectorAll(".ag-picker-segment");
+        segButtons[0].onclick = () => {
+            allowBaseKnowledge = false;
+            segButtons[0].classList.add("is-selected");
+            segButtons[0].setAttribute("aria-checked", "true");
+            segButtons[1].classList.remove("is-selected");
+            segButtons[1].setAttribute("aria-checked", "false");
+            updateSummary();
+        };
+        segButtons[1].onclick = () => {
+            allowBaseKnowledge = true;
+            segButtons[1].classList.add("is-selected");
+            segButtons[1].setAttribute("aria-checked", "true");
+            segButtons[0].classList.remove("is-selected");
+            segButtons[0].setAttribute("aria-checked", "false");
+            updateSummary();
+        };
+
+        // 5. Footer
+        const footerEl = document.createElement("div");
+        footerEl.className = "ag-picker-footer";
+        footerEl.innerHTML = `
+            <div class="ag-picker-summary">Caricamento...</div>
+            <div class="ag-picker-footer-buttons">
+                <button type="button" class="ag-picker-btn ag-picker-btn-cancel">Annulla</button>
+                <button type="button" class="ag-picker-btn mod-cta ag-picker-btn-confirm" disabled>Avvia</button>
+            </div>
+        `;
+        modalEl.appendChild(footerEl);
+
+        const summaryEl = footerEl.querySelector(".ag-picker-summary");
+        const cancelBtn = footerEl.querySelector(".ag-picker-btn-cancel");
+        const confirmBtn = footerEl.querySelector(".ag-picker-btn-confirm");
+
+        const isValid = () => {
+            if (activeType === "notebooklm") return selectedNotebooks.length > 0;
+            if (activeType === "youtube") return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/.+/i.test(youtubeUrl.trim());
+            if (activeType === "web") return /^https?:\/\/[^\s$.?#].[^\s]*$/i.test(webUrl.trim());
+            if (activeType === "local_files") return pickedFiles.length > 0;
+            if (activeType === "studies") return true;
+            return false;
+        };
+
+        const updateSummary = () => {
+            const valid = isValid();
+            confirmBtn.disabled = !valid;
+
+            if (activeType === "notebooklm") {
+                if (!selectedNotebooks.length) {
+                    summaryEl.textContent = "NotebookLM · Seleziona almeno un notebook";
+                } else {
+                    const count = selectedNotebooks.length;
+                    const nLabel = count === 1 ? "1 notebook" : `${count} notebook`;
+                    const kLabel = allowBaseKnowledge ? "+ conoscenza AI" : "solo fonti";
+                    summaryEl.textContent = `NotebookLM · ${nLabel} · ${kLabel}`;
+                }
+            } else if (activeType === "youtube") {
+                summaryEl.textContent = valid ? "YouTube · URL pronto" : "YouTube · Inserisci un link YouTube valido";
+            } else if (activeType === "web") {
+                summaryEl.textContent = valid ? "Sito Web · URL pronto" : "Sito Web · Inserisci un URL valido (https://...)";
+            } else if (activeType === "local_files") {
+                if (!pickedFiles.length) {
+                    summaryEl.textContent = "File locali · Seleziona almeno un file";
+                } else {
+                    summaryEl.textContent = `File locali · ${pickedFiles.length} ${pickedFiles.length === 1 ? "file selezionato" : "file selezionati"}`;
+                }
+            } else if (activeType === "studies") {
+                summaryEl.textContent = "Solo studi scientifici · Ricerca automatica";
+            }
+        };
+
+        const switchActiveType = (newType) => {
+            activeType = newType;
+            for (const [t, card] of Object.entries(cardElements)) {
+                const isSel = t === activeType;
+                card.classList.toggle("is-selected", isSel);
+                card.setAttribute("aria-checked", isSel ? "true" : "false");
+            }
+
+            if (activeType === "notebooklm" && !hideKnowledgeSection) {
+                knowledgeSectionEl.style.display = "";
+            } else {
+                knowledgeSectionEl.style.display = "none";
+            }
+
+            renderContextual();
+            updateSummary();
+        };
+
+        const renderContextual = () => {
+            contextualEl.innerHTML = "";
+
+            if (activeType === "notebooklm") {
+                const searchWrap = document.createElement("div");
+                searchWrap.className = "ag-picker-search-wrap";
+                searchWrap.innerHTML = `<input type="search" class="ag-picker-input ag-picker-search" placeholder="Cerca notebook per titolo o ID..." value="${escapeHtml(notebookSearchQuery)}" aria-label="Cerca notebook">`;
+                contextualEl.appendChild(searchWrap);
+                const sInput = searchWrap.querySelector("input");
+                sInput.oninput = (e) => {
+                    notebookSearchQuery = e.target.value;
+                    renderNotebookList();
+                };
+
+                const counterEl = document.createElement("div");
+                counterEl.className = "ag-picker-counter";
+                contextualEl.appendChild(counterEl);
+
+                const listContainer = document.createElement("div");
+                listContainer.className = "ag-picker-notebook-list";
+                contextualEl.appendChild(listContainer);
+
+                const manualRow = document.createElement("div");
+                manualRow.className = "ag-picker-manual-row";
+                manualRow.innerHTML = `
+                    <input type="text" class="ag-picker-input ag-picker-manual-input" placeholder="Aggiungi ID o Titolo personalizzato...">
+                    <button type="button" class="ag-picker-btn ag-picker-manual-btn">Aggiungi</button>
+                `;
+                contextualEl.appendChild(manualRow);
+                const manualInput = manualRow.querySelector(".ag-picker-manual-input");
+                const manualAddBtn = manualRow.querySelector(".ag-picker-manual-btn");
+
+                const handleAddManual = () => {
+                    const val = manualInput.value.trim();
+                    if (val) {
+                        if (!selectedNotebooks.some(s => s.id === val)) {
+                            selectedNotebooks.push({ id: val, title: val, sources: 0 });
+                        }
+                        if (!validNotebooks.some(s => s.id === val)) {
+                            validNotebooks.unshift({ id: val, title: val, sources: 0 });
+                        }
+                        manualInput.value = "";
+                        renderNotebookList();
+                        updateSummary();
+                    }
+                };
+                manualAddBtn.onclick = handleAddManual;
+                manualInput.onkeydown = (e) => {
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleAddManual();
+                    }
+                };
+
+                const renderNotebookList = () => {
+                    listContainer.innerHTML = "";
+                    const count = selectedNotebooks.length;
+                    counterEl.textContent = count === 0
+                        ? "Nessun notebook selezionato"
+                        : (count === 1 ? "1 notebook selezionato" : `${count} notebook selezionati`);
+
+                    const q = notebookSearchQuery.trim().toLowerCase();
+                    const filtered = validNotebooks.filter(nb => !q || (nb.title || "").toLowerCase().includes(q) || (nb.id || "").toLowerCase().includes(q));
+
+                    if (filtered.length === 0) {
+                        const emptyEl = document.createElement("div");
+                        emptyEl.className = "ag-picker-empty-state";
+                        emptyEl.textContent = validNotebooks.length === 0
+                            ? "Nessun notebook trovato: inserisci un ID manuale qui sotto"
+                            : "Nessun notebook corrispondente alla ricerca";
+                        listContainer.appendChild(emptyEl);
+                        return;
+                    }
+
+                    for (const nb of filtered) {
+                        const isSelected = selectedNotebooks.some(s => s.id === nb.id);
+                        const itemEl = document.createElement("div");
+                        itemEl.className = "ag-picker-notebook-item" + (isSelected ? " is-selected" : "");
+                        itemEl.setAttribute("role", "checkbox");
+                        itemEl.setAttribute("aria-checked", isSelected ? "true" : "false");
+                        itemEl.setAttribute("tabindex", "0");
+
+                        const shortId = nb.id.length > 8 ? `${nb.id.slice(0, 8)}…` : nb.id;
+                        const sourcesText = `${nb.sources || 0} ${nb.sources === 1 ? 'fonte' : 'fonti'}`;
+
+                        itemEl.innerHTML = `
+                            <input type="checkbox" class="ag-picker-checkbox" ${isSelected ? 'checked' : ''} tabindex="-1">
+                            <div class="ag-picker-notebook-info">
+                                <div class="ag-picker-notebook-title">${escapeHtml(nb.title || "(Senza titolo)")}</div>
+                                <div class="ag-picker-notebook-meta">${sourcesText} · <span class="ag-picker-mono">${escapeHtml(shortId)}</span></div>
+                            </div>
+                        `;
+
+                        const toggle = () => {
+                            const idx = selectedNotebooks.findIndex(s => s.id === nb.id);
+                            if (idx >= 0) {
+                                selectedNotebooks.splice(idx, 1);
+                            } else {
+                                selectedNotebooks.push({
+                                    id: nb.id,
+                                    title: nb.title || nb.id,
+                                    sources: nb.sources || 0
+                                });
+                            }
+                            renderNotebookList();
+                            updateSummary();
+                        };
+
+                        itemEl.onclick = toggle;
+                        itemEl.onkeydown = (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                toggle();
+                            }
+                        };
+                        listContainer.appendChild(itemEl);
+                    }
+                };
+
+                renderNotebookList();
+
+            } else if (activeType === "youtube") {
+                const wrap = document.createElement("div");
+                wrap.className = "ag-picker-field-wrap";
+                wrap.innerHTML = `
+                    <label class="ag-picker-label" for="ag-yt-url-input">URL del Video YouTube</label>
+                    <input type="url" id="ag-yt-url-input" class="ag-picker-input" placeholder="https://www.youtube.com/watch?v=..." value="${escapeHtml(youtubeUrl)}">
+                    <div class="ag-picker-error" style="display: none;"></div>
+                `;
+                contextualEl.appendChild(wrap);
+                const input = wrap.querySelector("input");
+                const errorEl = wrap.querySelector(".ag-picker-error");
+
+                input.oninput = (e) => {
+                    youtubeUrl = e.target.value;
+                    const val = youtubeUrl.trim();
+                    const isYt = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/.+/i.test(val);
+                    if (!val) {
+                        errorEl.style.display = "none";
+                    } else if (!isYt) {
+                        errorEl.textContent = "Inserisci un URL valido di YouTube (es. https://www.youtube.com/watch?v=...)";
+                        errorEl.style.display = "block";
+                    } else {
+                        errorEl.style.display = "none";
+                    }
+                    updateSummary();
+                };
+                setTimeout(() => input.focus(), 50);
+
+            } else if (activeType === "web") {
+                const wrap = document.createElement("div");
+                wrap.className = "ag-picker-field-wrap";
+                wrap.innerHTML = `
+                    <label class="ag-picker-label" for="ag-web-url-input">URL della Pagina Web</label>
+                    <input type="url" id="ag-web-url-input" class="ag-picker-input" placeholder="https://example.com/articolo..." value="${escapeHtml(webUrl)}">
+                    <div class="ag-picker-error" style="display: none;"></div>
+                `;
+                contextualEl.appendChild(wrap);
+                const input = wrap.querySelector("input");
+                const errorEl = wrap.querySelector(".ag-picker-error");
+
+                input.oninput = (e) => {
+                    webUrl = e.target.value;
+                    const val = webUrl.trim();
+                    const isWeb = /^https?:\/\/[^\s$.?#].[^\s]*$/i.test(val);
+                    if (!val) {
+                        errorEl.style.display = "none";
+                    } else if (!isWeb) {
+                        errorEl.textContent = "Inserisci un URL web valido (es. https://...)";
+                        errorEl.style.display = "block";
+                    } else {
+                        errorEl.style.display = "none";
+                    }
+                    updateSummary();
+                };
+                setTimeout(() => input.focus(), 50);
+
+            } else if (activeType === "local_files") {
+                const wrap = document.createElement("div");
+                wrap.className = "ag-picker-field-wrap";
+                wrap.innerHTML = `
+                    <div class="ag-picker-actions-row">
+                        <button type="button" class="ag-picker-btn mod-cta ag-picker-browse-btn">📁 Scegli file dal computer…</button>
+                        <span class="ag-picker-muted-hint">PDF, TXT o Markdown</span>
+                    </div>
+                    <div class="ag-picker-file-list"></div>
+                    <div class="ag-picker-vault-fallback">
+                        <div class="ag-picker-section-label" style="margin-top: 8px;">Oppure scegli dal vault:</div>
+                        <input type="search" class="ag-picker-input ag-picker-vault-search" placeholder="Cerca nota o file nel vault...">
+                        <div class="ag-picker-vault-results" style="display: none;"></div>
+                    </div>
+                `;
+                contextualEl.appendChild(wrap);
+
+                const browseBtn = wrap.querySelector(".ag-picker-browse-btn");
+                const fileListEl = wrap.querySelector(".ag-picker-file-list");
+                const vaultSearchInput = wrap.querySelector(".ag-picker-vault-search");
+                const vaultResultsEl = wrap.querySelector(".ag-picker-vault-results");
+
+                const renderFileList = () => {
+                    fileListEl.innerHTML = "";
+                    if (!pickedFiles.length) {
+                        fileListEl.innerHTML = `<div class="ag-picker-empty-state" style="padding: 8px 0;">Nessun file selezionato</div>`;
+                        return;
+                    }
+                    for (let i = 0; i < pickedFiles.length; i++) {
+                        const filePath = pickedFiles[i];
+                        const itemEl = document.createElement("div");
+                        itemEl.className = "ag-picker-file-item";
+                        itemEl.innerHTML = `
+                            <span class="ag-picker-file-icon">📄</span>
+                            <span class="ag-picker-file-path" title="${escapeHtml(filePath)}">${escapeHtml(path.basename(filePath))}</span>
+                            <button type="button" class="ag-picker-file-remove" aria-label="Rimuovi file" title="Rimuovi">✕</button>
+                        `;
+                        itemEl.querySelector(".ag-picker-file-remove").onclick = () => {
+                            pickedFiles.splice(i, 1);
+                            renderFileList();
+                            updateSummary();
+                        };
+                        fileListEl.appendChild(itemEl);
+                    }
+                };
+
+                browseBtn.onclick = async () => {
+                    browseBtn.disabled = true;
+                    try {
+                        const chosen = await pickLocalFilesWithAppleScript();
+                        if (Array.isArray(chosen) && chosen.length > 0) {
+                            for (const f of chosen) {
+                                if (!pickedFiles.includes(f)) pickedFiles.push(f);
+                            }
+                            renderFileList();
+                            updateSummary();
+                        }
+                    } catch (_) {}
+                    browseBtn.disabled = false;
+                };
+
+                vaultSearchInput.oninput = (e) => {
+                    const q = e.target.value.trim().toLowerCase();
+                    vaultResultsEl.innerHTML = "";
+                    if (!q || !app || !app.vault) {
+                        vaultResultsEl.style.display = "none";
+                        return;
+                    }
+                    const files = app.vault.getFiles().filter(f => !f.path.startsWith("."));
+                    const matches = files.filter(f => f.path.toLowerCase().includes(q)).slice(0, 5);
+                    if (!matches.length) {
+                        vaultResultsEl.innerHTML = `<div class="ag-picker-empty-state">Nessun file trovato nel vault</div>`;
+                        vaultResultsEl.style.display = "block";
+                        return;
+                    }
+                    for (const f of matches) {
+                        const rEl = document.createElement("div");
+                        rEl.className = "ag-picker-vault-result-item";
+                        rEl.textContent = `📄 ${f.path}`;
+                        rEl.onclick = () => {
+                            const full = path.join(vaultBasePath, f.path);
+                            if (!pickedFiles.includes(full)) pickedFiles.push(full);
+                            vaultSearchInput.value = "";
+                            vaultResultsEl.style.display = "none";
+                            renderFileList();
+                            updateSummary();
+                        };
+                        vaultResultsEl.appendChild(rEl);
+                    }
+                    vaultResultsEl.style.display = "block";
+                };
+
+                renderFileList();
+
+            } else if (activeType === "studies") {
+                const info = document.createElement("div");
+                info.className = "ag-picker-info-box";
+                info.innerHTML = `
+                    <div class="ag-picker-info-icon">🔬</div>
+                    <div class="ag-picker-info-text">
+                        <strong>Ricerca e analisi scientifica autonoma</strong>
+                        <p>L'AI effettuerà una scansione su banche dati scientifiche (PubMed, PMC, arXiv), valutando criticamente la gerarchia delle evidenze (meta-analisi, RCT) per redigere la nota.</p>
+                    </div>
+                `;
+                contextualEl.appendChild(info);
+            }
+        };
+
+        const cleanup = () => {
+            document.removeEventListener("keydown", handleKeydown, true);
+            if (modalContainer.parentNode) {
+                modalContainer.parentNode.removeChild(modalContainer);
+            }
+        };
+
+        const doConfirm = () => {
+            if (!isValid()) return;
+            submitted = true;
+            cleanup();
+
+            if (activeType === "studies") {
+                resolve({
+                    type: "studies",
+                    label: "Studi scientifici (ricerca automatica)",
+                    value: ""
+                });
+            } else if (activeType === "youtube") {
+                resolve({
+                    type: "youtube",
+                    label: "Video YouTube",
+                    value: youtubeUrl.trim()
+                });
+            } else if (activeType === "web") {
+                resolve({
+                    type: "web",
+                    label: "Sito Online",
+                    value: webUrl.trim()
+                });
+            } else if (activeType === "local_files") {
+                resolve({
+                    type: "local_files",
+                    label: `File Locali (${pickedFiles.length} file)`,
+                    value: pickedFiles
+                });
+            } else if (activeType === "notebooklm") {
+                const titlesSummary = selectedNotebooks.map(n => n.title).join(" + ");
+                resolve({
+                    type: "notebooklm",
+                    label: selectedNotebooks.length === 1
+                        ? `NotebookLM: ${selectedNotebooks[0].title}`
+                        : `NotebookLM Multiplo (${selectedNotebooks.length} fonti: ${titlesSummary})`,
+                    value: selectedNotebooks,
+                    notebooks: selectedNotebooks.map(n => n.id),
+                    notebook_details: selectedNotebooks,
+                    allow_base_knowledge: allowBaseKnowledge
+                });
+            }
+        };
+
+        confirmBtn.onclick = doConfirm;
+        cancelBtn.onclick = () => {
+            cleanup();
+            if (!submitted) resolve(null);
+        };
+        headerEl.querySelector(".ag-picker-close-btn").onclick = () => {
+            cleanup();
+            if (!submitted) resolve(null);
+        };
+        modalBg.onclick = () => {
+            cleanup();
+            if (!submitted) resolve(null);
+        };
+
+        const handleKeydown = (e) => {
+            if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                cleanup();
+                if (!submitted) resolve(null);
+                return;
+            }
+
+            if (e.key === "Enter") {
+                const target = e.target;
+                if (target && target.classList && target.classList.contains("ag-picker-manual-input")) {
+                    return;
+                }
+                if (target && target.tagName === "BUTTON") {
+                    return;
+                }
+                if (isValid()) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    doConfirm();
+                }
+            }
+        };
+
+        document.addEventListener("keydown", handleKeydown, true);
+        document.body.appendChild(modalContainer);
+
+        switchActiveType(activeType);
+
+        setTimeout(() => {
+            if (allowedTypes.length > 1 && cardElements[activeType]) {
+                cardElements[activeType].focus();
+            } else {
+                const firstInput = modalEl.querySelector(".ag-picker-input");
+                if (firstInput) firstInput.focus();
+            }
+        }, 60);
+    });
+}
+
+// Fallback legacy per selectSourceInteractive (suggester classico)
+async function legacySelectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Passo 4/8: Seleziona la Fonte:", discipline = "") {
     const withStudies = discipline === "Bodybuilding";
     const normalSourceOptions = [
         ...(withStudies ? [{ label: "🔬 Solo studi scientifici (l'AI cerca, legge e valuta gli studi sull'argomento)", value: "studies" }] : []),
@@ -1210,45 +2134,20 @@ async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Pa
             value: pickedFiles
         };
     } else if (chosenSourceType === "notebooklm") {
-        // Passo 5: Modalità Conoscenza
         const chosenKnowledge = await promptKnowledgeMode(tp);
         if (chosenKnowledge === null || chosenKnowledge === undefined) {
             return null;
         }
-        // Passo 7: Selezione Multipla NotebookLM
-        return await selectNotebookLMInteractive(tp, "Passo 7/8: Seleziona i NotebookLM:", vaultBasePath, chosenKnowledge);
+        return await legacySelectNotebookLMInteractive(tp, "Passo 7/8: Seleziona i NotebookLM:", vaultBasePath, chosenKnowledge);
     }
     return null;
 }
 
-// Helper: Selezione Modalità Conoscenza per NotebookLM
-async function promptKnowledgeMode(tp) {
-    await new Promise(resolve => setTimeout(resolve, 80));
-    const knowledgeOptions = [
-        "🔒 1. Solo NotebookLM (Esclusivo — Zero conoscenza esterna)",
-        "🧠+🌐 2. NotebookLM (Fonte Primaria) + Conoscenza Interna AI"
-    ];
-    const knowledgeValues = [false, true];
-
-    const chosenKnowledge = await tp.system.suggester(
-        knowledgeOptions,
-        knowledgeValues,
-        false,
-        "Passo 5/8: Modalità Conoscenza per NotebookLM:"
-    );
-
-    if (chosenKnowledge === null || chosenKnowledge === undefined) {
-        return null;
-    }
-    return chosenKnowledge;
-}
-
-// Helper: Selezione NotebookLM Multipla tramite Tendina Nativa Suggester (Tasto INVIO per selezionare)
-async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona NotebookLM:", vaultBasePath = "", preselectedKnowledge = null) {
+// Fallback legacy per selectNotebookLMInteractive (suggester classico a ciclo)
+async function legacySelectNotebookLMInteractive(tp, promptHeadline = "Seleziona NotebookLM:", vaultBasePath = "", preselectedKnowledge = null) {
     const allNotebooks = await getNotebookLMList(vaultBasePath);
     const validNotebooks = allNotebooks.filter(nb => nb && nb.id);
 
-    // Fallback: se nessun notebook rilevato via CLI o cache, richiedi input testuale manuale
     if (validNotebooks.length === 0) {
         const manualInput = await tp.system.prompt(
             `${promptHeadline}\nNessun notebook rilevato. Inserisci ID o Nome del NotebookLM:`,
@@ -1281,13 +2180,11 @@ async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona Noteb
         const options = [];
         const values = [];
 
-        // 1. In cima alla tendina: Opzione di conferma attiva se ci sono selezioni
         if (selectedNotebooks.length > 0) {
             options.push(`🚀 CONFERMA E AVVIA (${selectedNotebooks.length} notebook selezionati)`);
             values.push({ action: "confirm" });
         }
 
-        // 2. Elenco notebook: spunta ☑️ se già selezionato, ◻️ altrimenti
         for (const nb of validNotebooks) {
             const isSelected = selectedNotebooks.some(s => s.id === nb.id);
             const checkMark = isSelected ? "☑️ " : "◻️ ";
@@ -1299,14 +2196,12 @@ async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona Noteb
             values.push({ action: "toggle", notebook: nb });
         }
 
-        // 3. Opzioni di controllo in fondo alla tendina
         options.push("✏️ Inserisci ID o Nome personalizzato...");
         values.push({ action: "manual" });
 
         options.push("❌ Annulla operazione");
         values.push({ action: "cancel" });
 
-        // Pausa di 100ms tra le aperture del suggester per disaccoppiare gli eventi DOM di Obsidian
         await new Promise(resolve => setTimeout(resolve, 100));
 
         const countInfo = selectedNotebooks.length > 0 ? ` [${selectedNotebooks.length} selezionati]` : "";
@@ -1317,7 +2212,6 @@ async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona Noteb
             `${promptHeadline}${countInfo} - Premi INVIO per selezionare/deselezionare:`
         );
 
-        // Se l'utente preme ESC (choice è null o undefined): annulla ed esci subito
         if (!choice) {
             return null;
         }
@@ -1385,6 +2279,78 @@ async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona Noteb
         notebook_details: selectedNotebooks,
         allow_base_knowledge: chosenKnowledge
     };
+}
+
+// Helper: Selettore interattivo unificato per fonti esterne
+async function selectSourceInteractive(tp, app, vaultBasePath, promptTitle = "Passo 4/8: Seleziona la Fonte:", discipline = "") {
+    try {
+        const currentApp = app || (typeof tp !== "undefined" && tp?.app) || (typeof window !== "undefined" && window.app);
+        const notebooks = await getNotebookLMList(vaultBasePath);
+        const stepMatch = (promptTitle || "").match(/(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+/i);
+        const step = stepMatch ? stepMatch[0] : "";
+        const cleanTitle = (promptTitle || "").replace(/^(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+:\s*/i, "").replace(/:$/, "").trim();
+
+        const result = await openSourcePickerModal(currentApp, {
+            title: cleanTitle || promptTitle,
+            step: step,
+            discipline: discipline,
+            vaultBasePath: vaultBasePath,
+            notebooks: notebooks,
+            preselectedKnowledge: null,
+            allowedTypes: null
+        });
+        return result;
+    } catch (err) {
+        console.error("openSourcePickerModal failed, using legacy:", err);
+        return await legacySelectSourceInteractive(tp, app, vaultBasePath, promptTitle, discipline);
+    }
+}
+
+// Helper: Selezione Modalità Conoscenza per NotebookLM
+async function promptKnowledgeMode(tp) {
+    await new Promise(resolve => setTimeout(resolve, 80));
+    const knowledgeOptions = [
+        "🔒 1. Solo NotebookLM (Esclusivo — Zero conoscenza esterna)",
+        "🧠+🌐 2. NotebookLM (Fonte Primaria) + Conoscenza Interna AI"
+    ];
+    const knowledgeValues = [false, true];
+
+    const chosenKnowledge = await tp.system.suggester(
+        knowledgeOptions,
+        knowledgeValues,
+        false,
+        "Passo 5/8: Modalità Conoscenza per NotebookLM:"
+    );
+
+    if (chosenKnowledge === null || chosenKnowledge === undefined) {
+        return null;
+    }
+    return chosenKnowledge;
+}
+
+// Helper: Selezione NotebookLM Multipla tramite Modal moderno con fallback a suggester
+async function selectNotebookLMInteractive(tp, promptHeadline = "Seleziona NotebookLM:", vaultBasePath = "", preselectedKnowledge = null) {
+    try {
+        const currentApp = (typeof tp !== "undefined" && tp?.app) || (typeof window !== "undefined" && window.app);
+        const notebooks = await getNotebookLMList(vaultBasePath);
+        const stepMatch = (promptHeadline || "").match(/(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+/i);
+        const step = stepMatch ? stepMatch[0] : "";
+        const cleanTitle = (promptHeadline || "").replace(/^(?:Passo|Batch|Step|Tutor)\s*\d+\/\d+:\s*/i, "").replace(/:$/, "").trim();
+
+        const result = await openSourcePickerModal(currentApp, {
+            title: cleanTitle || promptHeadline,
+            step: step,
+            discipline: "",
+            vaultBasePath: vaultBasePath,
+            notebooks: notebooks,
+            preselectedKnowledge: preselectedKnowledge,
+            allowedTypes: ["notebooklm"]
+        });
+        return result;
+    } catch (err) {
+        console.error("openSourcePickerModal for NotebookLM failed, using legacy:", err);
+        return await legacySelectNotebookLMInteractive(tp, promptHeadline, vaultBasePath, preselectedKnowledge);
+    }
 }
 
 // =============================================================================
@@ -2235,12 +3201,21 @@ module.exports = async function (tp) {
             }
 
             if (!chosenDiscipline) {
-                chosenDiscipline = await tp.system.suggester(
-                    ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
-                    [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
-                    false,
-                    `Assegna la Disciplina a "${selectedFile.basename}":`
-                );
+                try {
+                    chosenDiscipline = await openDisciplinePickerModal(currentApp, {
+                        title: `Assegna la Disciplina a "${selectedFile.basename}":`,
+                        disciplines: disciplines,
+                        current: null
+                    });
+                } catch (err) {
+                    console.error("openDisciplinePickerModal failed, using fallback:", err);
+                    chosenDiscipline = await tp.system.suggester(
+                        ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
+                        [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
+                        false,
+                        `Assegna la Disciplina a "${selectedFile.basename}":`
+                    );
+                }
                 if (!chosenDiscipline) {
                     return "";
                 }
@@ -2339,12 +3314,21 @@ module.exports = async function (tp) {
         // =============================================================
         } else if (chosenOp === "moc") {
             // Passo 2/8: Disciplina
-            chosenDiscipline = await tp.system.suggester(
-                ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
-                [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
-                false,
-                "Passo 2/8: Seleziona la Disciplina per il MOC:"
-            );
+            try {
+                chosenDiscipline = await openDisciplinePickerModal(currentApp, {
+                    title: "Passo 2/8: Seleziona la Disciplina per il MOC:",
+                    disciplines: disciplines,
+                    current: null
+                });
+            } catch (err) {
+                console.error("openDisciplinePickerModal failed, using fallback:", err);
+                chosenDiscipline = await tp.system.suggester(
+                    ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
+                    [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
+                    false,
+                    "Passo 2/8: Seleziona la Disciplina per il MOC:"
+                );
+            }
             if (!chosenDiscipline) {
                 return "";
             }
@@ -2490,12 +3474,21 @@ module.exports = async function (tp) {
         // =============================================================
         } else {
             // Passo 2/8: Disciplina
-            chosenDiscipline = await tp.system.suggester(
-                ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
-                [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
-                false,
-                "Passo 2/8: Seleziona la Disciplina"
-            );
+            try {
+                chosenDiscipline = await openDisciplinePickerModal(currentApp, {
+                    title: "Passo 2/8: Seleziona la Disciplina",
+                    disciplines: disciplines,
+                    current: null
+                });
+            } catch (err) {
+                console.error("openDisciplinePickerModal failed, using fallback:", err);
+                chosenDiscipline = await tp.system.suggester(
+                    ["✨ Rileva o crea la materia automaticamente", ...disciplines.map(d => d.label)],
+                    [{name:"__auto__",pole:"",label:"✨ Rileva o crea la materia automaticamente"}, ...disciplines],
+                    false,
+                    "Passo 2/8: Seleziona la Disciplina"
+                );
+            }
             if (!chosenDiscipline) {
                 return "";
             }

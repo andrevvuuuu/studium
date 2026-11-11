@@ -193,6 +193,199 @@ module.exports = function injectAgStyle() {
         .ag-tutor-actions button { min-height: 28px; }
         .ag-tutor-more { background: transparent; box-shadow: none; color: var(--text-muted); }
         .ag-tutor-foot { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--background-modifier-border); color: var(--text-muted); font-size: 12px; }
+
+        /* Integrazione Scheda Nativa Right Sidebar con Design System HUD di Antigravity */
+        .ag-tutor-sidebar-view {
+            --ag-surface: color-mix(in srgb, var(--background-primary) 82%, transparent);
+            --ag-track: color-mix(in srgb, var(--text-normal) 9%, transparent);
+            --ag-done: var(--color-green, #34c759);
+            --ag-active: var(--interactive-accent);
+            --ag-danger: var(--color-red, #ff3b30);
+            padding: 10px 10px 24px !important;
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+            box-sizing: border-box !important;
+            font-family: var(--font-interface);
+            font-size: 13px;
+            line-height: 1.4;
+            color: var(--text-normal);
+        }
+        .ag-tutor-sidebar-view .ag-hud-card {
+            background: var(--ag-surface);
+            -webkit-backdrop-filter: blur(28px) saturate(1.7);
+            backdrop-filter: blur(28px) saturate(1.7);
+            border: 1px solid var(--background-modifier-border);
+            border-radius: 14px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 8px 24px -6px rgba(0, 0, 0, 0.35);
+            padding: 14px 14px 12px;
+            font-variant-numeric: tabular-nums;
+            margin-bottom: 12px;
+        }
+        .ag-tutor-sidebar-view .ag-hud-card .ag-hud-title {
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            color: var(--text-normal);
+        }
+        .ag-tutor-sidebar-view .ag-hud-card .ag-hud-clock {
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 999px;
+            border: 1px solid var(--background-modifier-border);
+        }
+        .ag-tutor-sidebar-view .ag-hud-card .ag-hud-clock.is-passo {
+            color: var(--ag-done);
+            background: color-mix(in srgb, var(--ag-done) 12%, transparent);
+            border-color: color-mix(in srgb, var(--ag-done) 28%, transparent);
+        }
+        .ag-tutor-sidebar-view .ag-hud-card .ag-hud-clock.is-lavoro {
+            color: var(--ag-active);
+            background: color-mix(in srgb, var(--ag-active) 12%, transparent);
+            border-color: color-mix(in srgb, var(--ag-active) 28%, transparent);
+        }
+        .ag-tutor-sidebar-view .ag-hud-card .ag-hud-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 10px;
+        }
+        .ag-tutor-sidebar-view .ag-hud-card .ag-hud-chip {
+            font-size: 11px;
+            padding: 2px 9px;
+            border-radius: 999px;
+            background: var(--ag-track);
+            color: var(--text-muted);
+            border: 1px solid var(--background-modifier-border);
+            white-space: nowrap;
+        }
+        .ag-tutor-sidebar-view .ag-hud-card .ag-hud-chip.highlight {
+            background: color-mix(in srgb, var(--ag-active) 12%, transparent);
+            color: var(--ag-active);
+            border-color: color-mix(in srgb, var(--ag-active) 25%, transparent);
+            font-weight: 500;
+        }
+        .ag-tutor-sidebar-view .ag-hud-bar {
+            display: flex;
+            gap: 4px;
+            height: 6px;
+            margin: 12px 0 8px;
+        }
+        .ag-tutor-sidebar-view .ag-hud-seg {
+            flex: 1;
+            position: relative;
+            min-width: 6px;
+            border-radius: 999px;
+            background: var(--ag-track);
+            overflow: hidden;
+        }
+        .ag-tutor-sidebar-view .ag-hud-now b.green,
+        .ag-tutor-sidebar-view .ag-hud-now b.is-passo {
+            color: var(--ag-done);
+        }
+        .ag-tutor-sidebar-view .ag-hud-lesson {
+            margin-top: 10px;
+            padding: 12px;
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--background-primary) 60%, transparent);
+            border: 1px solid var(--background-modifier-border);
+        }
+        .ag-tutor-sidebar-view .ag-hud-lesson-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-normal);
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--background-modifier-border);
+        }
+        .ag-tutor-sidebar-view .ag-hud-item {
+            margin-top: 8px;
+            font-size: 12px;
+        }
+        .ag-tutor-sidebar-view .ag-hud-mark {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            border: 1.5px solid currentColor;
+            box-sizing: border-box;
+            display: inline-block;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+        .ag-tutor-sidebar-view .ag-hud-item.is-coperto .ag-hud-mark {
+            background: var(--ag-done);
+            border-color: var(--ag-done);
+        }
+        .ag-tutor-sidebar-view .ag-hud-item.is-da_creare .ag-hud-mark {
+            background: var(--ag-active);
+            border-color: var(--ag-active);
+        }
+        .ag-tutor-sidebar-view .ag-hud-item.is-da_completare .ag-hud-mark {
+            background: var(--text-accent);
+            border-color: var(--text-accent);
+        }
+        .ag-tutor-sidebar-view .ag-hud-badge {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 1px 5px;
+            border-radius: 4px;
+            margin-right: 6px;
+        }
+        .ag-tutor-sidebar-view .ag-hud-badge.is-coperto {
+            background: color-mix(in srgb, var(--ag-done) 14%, transparent);
+            color: var(--ag-done);
+        }
+        .ag-tutor-sidebar-view .ag-hud-badge.is-da_creare {
+            background: color-mix(in srgb, var(--ag-active) 14%, transparent);
+            color: var(--ag-active);
+        }
+        .ag-tutor-sidebar-view .ag-hud-badge.is-da_completare {
+            background: color-mix(in srgb, var(--text-accent) 14%, transparent);
+            color: var(--text-accent);
+        }
+        .ag-tutor-sidebar-view .ag-hud-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 10px;
+        }
+        .ag-tutor-sidebar-view .ag-hud-btn {
+            font-size: 12px;
+            font-weight: 600;
+            padding: 5px 12px;
+            border-radius: 7px;
+            border: none;
+            cursor: pointer;
+            background: var(--interactive-accent);
+            color: #fff;
+        }
+        .ag-tutor-sidebar-view .ag-hud-btn.secondary {
+            background: var(--ag-track);
+            color: var(--text-normal);
+            border: 1px solid var(--background-modifier-border);
+        }
+        .ag-tutor-sidebar-view .ag-hud-more {
+            background: transparent;
+            border: none;
+            box-shadow: none;
+            color: var(--text-muted);
+            font-size: 11.5px;
+            cursor: pointer;
+            padding: 4px 0;
+        }
+        .ag-tutor-sidebar-view .ag-hud-more:hover {
+            color: var(--text-normal);
+            text-decoration: underline;
+        }
+        .ag-tutor-sidebar-view .ag-hud-stats {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid var(--background-modifier-border);
+            font-size: 11.5px;
+            color: var(--text-muted);
+        }
     `;
     document.head.appendChild(styleEl);
 };

@@ -34,7 +34,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Iniezione del PATH completo di macOS per ambienti grafici e terminali
 EXTRA_PATHS = [
@@ -2534,7 +2534,7 @@ def process_source_fast(
         # Prova Visiva finale Loading Bar (se multi-notebook)
         if is_multi:
             formatted_tot = f"{total_real_chars:,}".replace(",", ".")
-            nb_summary = ", ".join([f"{c['title']} ({f'{c['chars']:,}'.replace(',', '.')})" for c in notebook_char_counts])
+            nb_summary = ", ".join([f"{c['title']} ({str(format(c['chars'], ',')).replace(',', '.')})" for c in notebook_char_counts])
             update_status(
                 vault_root=vault_root,
                 percent=40,

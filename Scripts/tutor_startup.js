@@ -12,7 +12,9 @@ module.exports = async function (tp) {
     // Il menu di Antigravity aperto dai pulsanti della barra ha bisogno dei prompt di Templater
     window._agTutorTp = tp;
     const vaultBasePath = app.vault.adapter.basePath;
-    const render = require(path.join(vaultBasePath, "Scripts", "tutor_bar.js"));
+    const scriptPath = path.join(vaultBasePath, "Scripts", "tutor_bar.js");
+    try { delete require.cache[require.resolve(scriptPath)]; } catch (_) {}
+    const render = require(scriptPath);
     const statePath = path.join(vaultBasePath, ".antigravity", "tutor", "state.json");
     const env = Object.assign({}, process.env, {
         PATH: [path.join(vaultBasePath, ".antigravity", "bin"), path.join(process.env.HOME || "", ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":") + ":" + (process.env.PATH || "")

@@ -520,6 +520,11 @@ module.exports = function injectAgStyle() {
             font-size: var(--font-ui-small);
             color: var(--text-muted);
         }
+        .ag-picker-knowledge-section,
+        .ag-picker-choice-knowledge-section {
+            overflow: visible;
+            flex-shrink: 0;
+        }
         .ag-picker-segmented {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -528,49 +533,95 @@ module.exports = function injectAgStyle() {
             padding: 4px;
             border-radius: var(--radius-m);
             border: 1px solid var(--background-modifier-border);
+            overflow: visible;
+            box-sizing: border-box;
         }
         .ag-picker-segment {
+            position: relative;
             display: flex;
             flex-direction: column;
             align-items: center;
-            text-align: center;
-            padding: 8px 10px;
+            justify-content: center;
+            gap: 4px;
+            padding: 10px 12px;
+            min-height: 58px;
+            height: 100%;
             border-radius: var(--radius-s);
             border: 1px solid transparent;
             background: transparent;
             cursor: pointer;
-            color: var(--text-muted);
-            transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+            color: var(--text-normal);
+            font-family: inherit;
+            text-align: center;
+            user-select: none;
+            box-sizing: border-box;
+            opacity: 0.85;
+            transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
         }
         .ag-picker-segment:hover {
-            color: var(--text-normal);
+            opacity: 1;
             background: var(--background-modifier-hover);
-            border-color: var(--background-modifier-border-hover);
+            border-color: var(--background-modifier-border);
         }
         .ag-picker-segment:focus-visible {
             outline: 2px solid var(--interactive-accent);
-            outline-offset: 2px;
+            outline-offset: -2px;
+            z-index: 2;
+            opacity: 1;
         }
         .ag-picker-segment.is-selected,
         .ag-picker-segment[aria-checked="true"] {
+            opacity: 1;
             background: var(--background-primary);
-            color: var(--text-normal);
             border-color: var(--interactive-accent);
             box-shadow: var(--shadow-s);
+        }
+        .ag-picker-segment.is-selected:hover,
+        .ag-picker-segment[aria-checked="true"]:hover {
+            background: var(--background-primary);
+            border-color: var(--interactive-accent);
+        }
+        .ag-picker-segment.is-selected:focus-visible,
+        .ag-picker-segment[aria-checked="true"]:focus-visible {
+            border-color: transparent;
         }
         .ag-picker-segment:disabled,
         .ag-picker-segment[aria-disabled="true"] {
             opacity: 0.5;
             cursor: not-allowed;
+            box-shadow: none;
         }
         .ag-picker-seg-title {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
             font-size: var(--font-ui-small);
             font-weight: var(--font-semibold);
+            color: var(--text-normal);
+            line-height: 1.3;
+            white-space: nowrap;
+            max-width: 100%;
+        }
+        .ag-picker-seg-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1em;
+            line-height: 1;
+            flex-shrink: 0;
+        }
+        .ag-picker-seg-label {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         .ag-picker-seg-sub {
             font-size: var(--font-ui-smaller);
             color: var(--text-muted);
-            margin-top: 2px;
+            line-height: 1.3;
+            text-align: center;
+            max-width: 100%;
         }
         .ag-picker-actions-row {
             display: flex;
@@ -836,7 +887,9 @@ module.exports = function injectAgStyle() {
             max-height: min(48vh, 380px);
             overflow-y: auto;
             scrollbar-gutter: stable;
-            padding: 2px;
+            /* spazio per il focus ring (outline 2px + offset 2px) dentro il box di scroll */
+            padding: 6px;
+            margin: -4px;
         }
         .ag-picker-choice-grid {
             display: grid;
@@ -845,7 +898,9 @@ module.exports = function injectAgStyle() {
             max-height: min(56vh, 460px);
             overflow-y: auto;
             scrollbar-gutter: stable;
-            padding: 2px;
+            /* spazio per il focus ring (outline 2px + offset 2px) dentro il box di scroll */
+            padding: 6px;
+            margin: -4px;
         }
         .ag-picker-choice-grid .ag-picker-section-label {
             grid-column: 1 / -1;

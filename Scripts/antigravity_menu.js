@@ -1587,11 +1587,11 @@ function openSourcePickerModal(app, options) {
             <div class="ag-picker-section-label">Modalità Conoscenza per NotebookLM</div>
             <div class="ag-picker-segmented" role="radiogroup" aria-label="Modalità conoscenza">
                 <button type="button" class="ag-picker-segment ${!allowBaseKnowledge ? 'is-selected' : ''}" role="radio" aria-checked="${!allowBaseKnowledge}">
-                    <span class="ag-picker-seg-title">🔒 1. Solo NotebookLM</span>
+                    <span class="ag-picker-seg-title"><span class="ag-picker-seg-icon" aria-hidden="true">🔒</span><span class="ag-picker-seg-label">1. Solo NotebookLM</span></span>
                     <span class="ag-picker-seg-sub">Esclusivo — Zero conoscenza esterna</span>
                 </button>
                 <button type="button" class="ag-picker-segment ${allowBaseKnowledge ? 'is-selected' : ''}" role="radio" aria-checked="${allowBaseKnowledge}">
-                    <span class="ag-picker-seg-title">🧠+🌐 2. NotebookLM + AI</span>
+                    <span class="ag-picker-seg-title"><span class="ag-picker-seg-icon" aria-hidden="true">🧠+🌐</span><span class="ag-picker-seg-label">2. NotebookLM + AI</span></span>
                     <span class="ag-picker-seg-sub">Fonte primaria + Conoscenza interna AI</span>
                 </button>
             </div>
@@ -3856,11 +3856,11 @@ function openChoiceModal(app, options) {
                     <div class="ag-picker-section-label">Modalità Conoscenza per NotebookLM</div>
                     <div class="ag-picker-segmented" role="radiogroup" aria-label="Modalità conoscenza">
                         <button type="button" class="ag-picker-segment is-selected" role="radio" aria-checked="true">
-                            <span class="ag-picker-seg-title">🔒 1. Solo NotebookLM</span>
+                            <span class="ag-picker-seg-title"><span class="ag-picker-seg-icon" aria-hidden="true">🔒</span><span class="ag-picker-seg-label">1. Solo NotebookLM</span></span>
                             <span class="ag-picker-seg-sub">Esclusivo — Zero conoscenza esterna</span>
                         </button>
                         <button type="button" class="ag-picker-segment" role="radio" aria-checked="false">
-                            <span class="ag-picker-seg-title">🧠+🌐 2. NotebookLM + AI</span>
+                            <span class="ag-picker-seg-title"><span class="ag-picker-seg-icon" aria-hidden="true">🧠+🌐</span><span class="ag-picker-seg-label">2. NotebookLM + AI</span></span>
                             <span class="ag-picker-seg-sub">Fonte primaria + Conoscenza interna AI</span>
                         </button>
                     </div>

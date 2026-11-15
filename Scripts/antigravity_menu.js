@@ -573,6 +573,19 @@ function escapeHtml(text) {
         .replace(/'/g, "&#039;");
 }
 
+// Helper: Acquisizione lazy di ag_job_control.js con require cache invalidata
+function getJobControl(vbp) {
+    const basePath = vbp || (window.app && window.app.vault && window.app.vault.adapter && window.app.vault.adapter.basePath) || "";
+    if (!basePath) return null;
+    const ctlPath = path.join(basePath, "Scripts", "ag_job_control.js");
+    try {
+        delete require.cache[require.resolve(ctlPath)];
+        return require(ctlPath);
+    } catch (_) {
+        return null;
+    }
+}
+
 // Helper: Pulizia preventiva e reset dell'ambiente per idempotenza totale (Zero Zombie, Runtime Isolato)
 function preRunCleanup(vaultBasePath, targetRelPath = "") {
     const env = getMacOSPathEnv();
@@ -594,7 +607,10 @@ function preRunCleanup(vaultBasePath, targetRelPath = "") {
     const statusFile = path.join(runtimeDir, "job-status.json");
     const initialStatus = {
         status: "running",
-        percent: 5,
+        percent: 0,
+        overall_percent: 0,
+        phase: "prep",
+        progress: null,
         step_number: 1,
         total_steps: 6,
         message: "🚀 Inizializzazione pipeline Antigravity...",
@@ -609,8 +625,19 @@ function preRunCleanup(vaultBasePath, targetRelPath = "") {
     } catch (e) {}
 }
 
-// Helper: Annullamento immediato del job da pulsante HUD
+// Helper: Annullamento immediato del job da pulsante HUD o Job Bar
 async function cancelCurrentJob(app, vaultBasePath) {
+    const vbp = vaultBasePath || (app && app.vault && app.vault.adapter && app.vault.adapter.basePath) || (window.app && window.app.vault && window.app.vault.adapter && window.app.vault.adapter.basePath) || "";
+    const ctl = getJobControl(vbp);
+    if (ctl && typeof ctl.getJobController === "function") {
+        try {
+            await ctl.getJobController().abort("user");
+            return;
+        } catch (e) {
+            console.error("[Antigravity] Abort con ctl.getJobController fallito, fallback a pkill:", e);
+        }
+    }
+
     const env = getMacOSPathEnv();
     const runtimeDir = getRuntimeDir();
     try {
@@ -623,6 +650,9 @@ async function cancelCurrentJob(app, vaultBasePath) {
         const cancelledData = {
             status: "cancelled",
             percent: 0,
+            overall_percent: 0,
+            phase: "prep",
+            progress: null,
             step_number: 0,
             total_steps: 6,
             message: "Operazione annullata dall'utente",
@@ -650,18 +680,27 @@ async function cancelCurrentJob(app, vaultBasePath) {
 // =============================================================================
 
 const HUD_PHASES = [
-    { key: "prep", label: "Preparazione", weight: 5 },
-    { key: "sources", label: "Lettura delle fonti", weight: 90 },
-    { key: "context", label: "Collegamenti e istruzioni", weight: 15 },
-    { key: "writing", label: "Scrittura", weight: 300 },
-    { key: "verify", label: "Verifica (fonti)", weight: 380 },
-    { key: "final", label: "Rifinitura", weight: 10 },
+    { key: "prep", label: "Preparazione", weight: 3 },
+    { key: "sources", label: "Lettura delle fonti", weight: 12 },
+    { key: "context", label: "Collegamenti e istruzioni", weight: 5 },
+    { key: "writing", label: "Scrittura", weight: 65 },
+    { key: "verify", label: "Verifica (fonti)", weight: 12 },
+    { key: "final", label: "Rifinitura", weight: 3 },
 ];
 const HUD_PHASE_ORDER = HUD_PHASES.map(p => p.key);
+const HUD_PHASE_BANDS = {
+    prep: [0, 3],
+    sources: [3, 15],
+    context: [15, 20],
+    writing: [20, 85],
+    verify: [85, 97],
+    final: [97, 100]
+};
+
 // Nel vault (non in /tmp) perché le durate devono sopravvivere ai riavvii
 const HUD_STATS_FILE = () => path.join(window.app.vault.adapter.basePath, ".antigravity", "hud-phase-stats.json");
 
-// Durate reali delle fasi nei job precedenti: pesano i segmenti della barra
+// Durate reali delle fasi nei job precedenti: usate solo per i cronometri per fase
 function loadPhaseStats() {
     try { return JSON.parse(fs.readFileSync(HUD_STATS_FILE(), "utf8")) || {}; } catch (_) { return {}; }
 }
@@ -675,18 +714,27 @@ function savePhaseDurations(durations) {
     try { fs.writeFileSync(HUD_STATS_FILE(), JSON.stringify(stats), "utf8"); } catch (_) {}
 }
 
-function phaseWeight(key, stats) {
-    const list = (stats[key] || []).slice().sort((a, b) => a - b);
-    if (list.length) return Math.max(3, list[Math.floor(list.length / 2)]);
-    return (HUD_PHASES.find(p => p.key === key) || { weight: 10 }).weight;
+function phasePlanFor(cfg, vaultBasePath) {
+    const ctl = getJobControl(vaultBasePath);
+    if (ctl && typeof ctl.phasePlanFor === "function") {
+        return ctl.phasePlanFor(cfg || {});
+    }
+    const op = (cfg && (cfg.operation_type || cfg.operation)) || "normal";
+    const strict = (cfg && cfg.strict_sources !== undefined)
+        ? Boolean(cfg.strict_sources)
+        : ((cfg && cfg.source && cfg.source.type === "notebooklm" && !cfg.allow_base_knowledge));
+    const p = ["prep", "sources", "context", "writing"];
+    if (op === "moc" || (op === "normal" && strict)) p.push("verify");
+    p.push("final");
+    return p;
 }
 
-function phasePlanFor(cfg) {
-    const op = (cfg && (cfg.operation || cfg.operation_type)) || "normal";
-    const isNlm = cfg && ((cfg.source && cfg.source.type === "notebooklm") || (Array.isArray(cfg.notebooks) && cfg.notebooks.length > 0));
-    // Verifica: note "Solo NotebookLM" e tutti i MOC (titoli, accenti, esclusività degli argomenti)
-    const strict = (op === "normal" && isNlm && cfg.allow_base_knowledge !== true) || op === "moc";
-    return HUD_PHASES.filter(p => p.key !== "verify" || strict).map(p => p.key);
+function phaseBandWidth(key, plan) {
+    let [lo, hi] = HUD_PHASE_BANDS[key] || [0, 3];
+    if (key === "final" && !plan.includes("verify")) {
+        [lo, hi] = [85, 100];
+    }
+    return Math.max(1, hi - lo);
 }
 
 function phaseOfStatus(st) {
@@ -720,14 +768,15 @@ function injectHudStyle() {
     require(path.join(window.app.vault.adapter.basePath, "Scripts", "ag_style.js"))();
 }
 
-// Barra segmentata: una porzione per fase, larga quanto la sua durata tipica
-function buildPhaseBar(container, plan, stats) {
+// Barra segmentata fedele: ogni segmento è largo quanto la banda del contratto
+function buildPhaseBar(container, plan) {
     container.innerHTML = "";
     const segs = {};
     for (const key of plan) {
         const seg = document.createElement("div");
         seg.className = "ag-hud-seg";
-        seg.style.flex = `${phaseWeight(key, stats)} 1 0`;
+        const width = phaseBandWidth(key, plan);
+        seg.style.flex = `${width} 1 0`;
         seg.appendChild(document.createElement("i"));
         container.appendChild(seg);
         segs[key] = seg;
@@ -735,20 +784,25 @@ function buildPhaseBar(container, plan, stats) {
     return segs;
 }
 
-// Aggiorna barra ed elenco fasi; restituisce la percentuale misurata complessiva
-function paintPhases(segs, stepsEl, plan, stats, active, fraction, phaseTimes, now) {
+// Aggiorna segmenti della barra ed elenco fasi; il segmento attivo si riempie secondo progress.done/total e pulsa se null
+function paintPhases(segs, stepsEl, plan, active, fraction, phaseTimes, now) {
     const activeIdx = plan.indexOf(active);
-    let doneWeight = 0, totalWeight = 0;
     plan.forEach((key, i) => {
-        const w = phaseWeight(key, stats);
-        totalWeight += w;
         const seg = segs[key];
-        seg.classList.toggle("is-done", i < activeIdx);
-        seg.classList.toggle("is-active", i === activeIdx);
-        seg.classList.toggle("is-idle", i === activeIdx && fraction === null);
-        seg.firstChild.style.width = i === activeIdx && fraction !== null ? `${(fraction * 100).toFixed(1)}%` : "";
-        if (i < activeIdx) doneWeight += w;
-        if (i === activeIdx && fraction !== null) doneWeight += w * fraction;
+        if (!seg) return;
+        const isDone = i < activeIdx;
+        const isActive = i === activeIdx;
+        const isIdle = isActive && fraction === null;
+        seg.classList.toggle("is-done", isDone);
+        seg.classList.toggle("is-active", isActive);
+        seg.classList.toggle("is-idle", isIdle);
+        if (isDone) {
+            seg.firstChild.style.width = "100%";
+        } else if (isActive) {
+            seg.firstChild.style.width = fraction !== null ? `${(fraction * 100).toFixed(1)}%` : "";
+        } else {
+            seg.firstChild.style.width = "0%";
+        }
     });
     if (stepsEl) {
         stepsEl.querySelectorAll("li").forEach((li, i) => {
@@ -758,7 +812,41 @@ function paintPhases(segs, stepsEl, plan, stats, active, fraction, phaseTimes, n
             li.lastChild.textContent = t ? formatClock(((t.end || now) - t.start) / 1000) : "";
         });
     }
-    return totalWeight ? Math.round((doneWeight / totalWeight) * 100) : 0;
+}
+
+// Calcolo percentuale fedele e monotona per lo stesso job_id
+function getClampedPercent(st, plan, ctl) {
+    if (!st) return 0;
+    if (st.status === "completed") return 100;
+    let pct = 0;
+    if (typeof st.overall_percent === "number") {
+        pct = st.overall_percent;
+    } else if (typeof st.percent === "number") {
+        pct = st.percent;
+    } else if (ctl && typeof ctl.computeOverallPercent === "function") {
+        pct = ctl.computeOverallPercent(st, plan);
+    } else {
+        const phase = st.phase || "prep";
+        let [lo, hi] = HUD_PHASE_BANDS[phase] || [0, 3];
+        if (phase === "final" && !plan.includes("verify")) [lo, hi] = [85, 100];
+        const p = st.progress;
+        const f = p && Number(p.total) > 0 ? Math.max(0, Math.min(1, Number(p.done) / Number(p.total))) : 0;
+        pct = Math.round(lo + (hi - lo) * f);
+    }
+    pct = Math.max(0, Math.min(100, Math.round(pct)));
+
+    const jid = st.job_id || "default";
+    if (typeof window !== "undefined") {
+        window._agHudClamp = window._agHudClamp || { jobId: null, maxPercent: 0 };
+        if (window._agHudClamp.jobId === jid) {
+            pct = Math.max(window._agHudClamp.maxPercent, pct);
+            window._agHudClamp.maxPercent = pct;
+        } else {
+            window._agHudClamp.jobId = jid;
+            window._agHudClamp.maxPercent = pct;
+        }
+    }
+    return pct;
 }
 
 function buildStepsList(stepsEl, plan) {
@@ -816,8 +904,12 @@ function renderProgressHud(app, vaultBasePath, targetFilePath, topicTitle, child
     let cfg = jobConfig;
     if (!cfg) {
         try {
-            const cjPath = path.join(getRuntimeDir(), "current-job.json");
-            if (fs.existsSync(cjPath)) cfg = JSON.parse(fs.readFileSync(cjPath, "utf8"));
+            const ctl = getJobControl(vaultBasePath);
+            cfg = ctl ? ctl.readJob() : null;
+            if (!cfg) {
+                const cjPath = path.join(getRuntimeDir(), "current-job.json");
+                if (fs.existsSync(cjPath)) cfg = JSON.parse(fs.readFileSync(cjPath, "utf8"));
+            }
         } catch (_) {}
     }
     const opType = (cfg && (cfg.operation || cfg.operation_type)) || "normal";
@@ -826,27 +918,61 @@ function renderProgressHud(app, vaultBasePath, targetFilePath, topicTitle, child
 
     const chips = [];
     if (cfg) {
-        const nbs = (Array.isArray(cfg.notebook_details) && cfg.notebook_details.length ? cfg.notebook_details : cfg.notebooks) || [];
-        for (const nb of nbs) {
-            const t = typeof nb === "object" ? (nb.title || nb.id) : String(nb);
-            if (t && !chips.includes(t)) chips.push(t);
+        const sources = Array.isArray(cfg.sources) && cfg.sources.length > 0
+            ? cfg.sources
+            : (cfg.source ? [cfg.source] : []);
+
+        const typeLabels = {
+            notebooklm: "NotebookLM",
+            youtube: "Video YouTube",
+            web: "Sito web",
+            local_files: "File locali",
+            studies: "Studi scientifici",
+            base_knowledge: "Conoscenza di base",
+            vault_consolidation: "Note del vault",
+            vault_file: "Nota del vault"
+        };
+
+        if (sources.length > 0) {
+            for (const s of sources) {
+                if (s.type === "notebooklm") {
+                    const nbs = (Array.isArray(s.notebook_details) && s.notebook_details.length ? s.notebook_details : s.notebooks) || [];
+                    if (nbs.length > 0) {
+                        for (const nb of nbs) {
+                            const t = typeof nb === "object" ? (nb.title || nb.id) : String(nb);
+                            if (t && !chips.includes(t)) chips.push(t);
+                        }
+                    } else {
+                        const t = s.label || "NotebookLM";
+                        if (!chips.includes(t)) chips.push(t);
+                    }
+                } else {
+                    const t = s.label || typeLabels[s.type] || s.type;
+                    if (t && !chips.includes(t)) chips.push(t);
+                }
+            }
+        } else {
+            const nbs = (Array.isArray(cfg.notebook_details) && cfg.notebook_details.length ? cfg.notebook_details : cfg.notebooks) || [];
+            for (const nb of nbs) {
+                const t = typeof nb === "object" ? (nb.title || nb.id) : String(nb);
+                if (t && !chips.includes(t)) chips.push(t);
+            }
+            if (!chips.length && cfg.notebook_title) chips.push(cfg.notebook_title);
         }
-        if (!chips.length && cfg.notebook_title) chips.push(cfg.notebook_title);
-        if (!chips.length && cfg.source) {
-            const typeLabels = {
-                youtube: "Video YouTube", web: "Sito web", local_files: "File locali",
-                base_knowledge: "Conoscenza di base", vault_consolidation: "Note del vault", vault_file: "Nota del vault"
-            };
-            const t = cfg.source.label || typeLabels[cfg.source.type];
-            if (t) chips.push(t);
+
+        const isStrict = cfg.strict_sources !== undefined
+            ? !!cfg.strict_sources
+            : (cfg.allow_base_knowledge !== undefined ? !cfg.allow_base_knowledge : (cfg.source && cfg.source.type === "notebooklm"));
+        if (chips.length) {
+            chips.push(isStrict ? "🔒 Solo fonti selezionate" : "+ conoscenza AI");
         }
-        if (chips.length && cfg.allow_base_knowledge === true && opType !== "moc") chips.push("+ conoscenza di base");
     }
 
     const hudEl = document.createElement("div");
     hudEl.id = "antigravity-progress-hud";
     hudEl.className = "ag-hud";
     hudEl.setAttribute("role", "status");
+    hudEl.setAttribute("tabindex", "-1");
     hudEl.innerHTML = `
         <div class="ag-hud-head">
             <div class="ag-hud-heading">
@@ -887,9 +1013,8 @@ function renderProgressHud(app, vaultBasePath, targetFilePath, topicTitle, child
     }
     if (!chips.length) chipsEl.remove();
 
-    const plan = phasePlanFor(cfg);
-    const stats = loadPhaseStats();
-    const segs = buildPhaseBar(q(".ag-hud-bar"), plan, stats);
+    const plan = phasePlanFor(cfg, vaultBasePath);
+    const segs = buildPhaseBar(q(".ag-hud-bar"), plan);
     const stepsEl = q(".ag-hud-steps");
     buildStepsList(stepsEl, plan);
     document.body.appendChild(hudEl);
@@ -928,10 +1053,16 @@ function renderProgressHud(app, vaultBasePath, targetFilePath, topicTitle, child
     });
     q(".ag-hud-x").addEventListener("click", () => cleanupHudAndStyle());
 
+    const ctl = getJobControl(vaultBasePath);
     const statusFilePath = path.join(getRuntimeDir(), "job-status.json");
     window._antigravityHudTimer = setInterval(() => {
         let st = null;
-        try { st = JSON.parse(fs.readFileSync(statusFilePath, "utf8")); } catch (_) { return; }
+        if (ctl && typeof ctl.readStatus === "function") {
+            try { st = ctl.readStatus(); } catch (_) {}
+        }
+        if (!st) {
+            try { st = JSON.parse(fs.readFileSync(statusFilePath, "utf8")); } catch (_) { return; }
+        }
         if (!st) return;
         const status = st.status || "running";
         const now = Date.now();
@@ -972,7 +1103,7 @@ function renderProgressHud(app, vaultBasePath, targetFilePath, topicTitle, child
             const durations = {};
             for (const [k, t] of Object.entries(phaseTimes)) if (t) durations[k] = ((t.end || now) - t.start) / 1000;
             savePhaseDurations(durations);
-            paintPhases(segs, stepsEl, plan, stats, plan[plan.length - 1], 1, phaseTimes, now);
+            paintPhases(segs, stepsEl, plan, plan[plan.length - 1], 1, phaseTimes, now);
             hudEl.classList.add("is-completed");
             stepsEl.querySelectorAll("li").forEach(li => li.className = "is-done");
             q(".ag-hud-now b").textContent = opType === "moc" ? "MOC pronto" : (opType === "edit" ? "Nota aggiornata" : "Nota pronta");
@@ -1012,11 +1143,12 @@ function renderProgressHud(app, vaultBasePath, targetFilePath, topicTitle, child
             currentPhase = phase;
         }
         const fraction = progressFraction(st);
-        const signature = `${phase}|${fraction}|${st.message}|${st.detail}`;
+        const signature = `${phase}|${fraction}|${st.message}|${st.detail}|${st.overall_percent}|${st.percent}`;
         if (signature === lastPainted) return;
         lastPainted = signature;
 
-        const pct = paintPhases(segs, stepsEl, plan, stats, phase, fraction, phaseTimes, now);
+        paintPhases(segs, stepsEl, plan, phase, fraction, phaseTimes, now);
+        const pct = getClampedPercent(st, plan, ctl);
         q(".ag-hud-pct").textContent = `${pct}%`;
         q(".ag-hud-now b").textContent = (st.message || HUD_PHASES.find(p => p.key === phase).label)
             .replace(/^[^\p{L}\p{N}]+/u, "").replace(/\.{3}$|…$/, "");
@@ -1059,6 +1191,18 @@ function launchBackgroundJob(app, vaultBasePath, jobData) {
         } catch (_) {}
     }
 
+    if (!jobData.job_id) {
+        jobData.job_id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    const ctl = getJobControl(vaultBasePath);
+    if (ctl && typeof ctl.resetForNewJob === "function") {
+        try {
+            ctl.resetForNewJob(jobData.job_id);
+        } catch (e) {
+            console.error("[Antigravity] Errore in resetForNewJob:", e);
+        }
+    }
+
     const runScriptPath = path.join(vaultBasePath, ".antigravity", "scripts", "run_job.sh");
     if (fs.existsSync(runScriptPath)) {
         try {
@@ -1083,10 +1227,14 @@ function launchBackgroundJob(app, vaultBasePath, jobData) {
     window._agCompletedNotified = false;
     window._agErrorNotified = false;
 
-    // Reset preventivo dello stato a 5% per reattività istantanea
+    // Reset preventivo dello stato a 0% per reattività istantanea
     const initStatus = {
+        job_id: jobData.job_id,
         status: "running",
-        percent: 5,
+        phase: "prep",
+        progress: null,
+        percent: 0,
+        overall_percent: 0,
         step_number: 1,
         total_steps: 6,
         message: "🧹 Preparazione ambiente e backup di sicurezza...",
@@ -1116,8 +1264,12 @@ function launchBackgroundJob(app, vaultBasePath, jobData) {
     } catch (err) {
         console.error("[Antigravity][menu] [launchBackgroundJob] Errore avvio processo background:", err);
         const errStatus = {
+            job_id: jobData.job_id,
             status: "error",
+            phase: "prep",
+            progress: null,
             percent: 0,
+            overall_percent: 0,
             step_number: 0,
             total_steps: 6,
             message: "Impossibile avviare il processo di background",
@@ -1137,6 +1289,15 @@ function launchBackgroundJob(app, vaultBasePath, jobData) {
             initStatus.detail = `Processo attivo in background (PID: ${childPid})`;
             fs.writeFileSync(statusFile, JSON.stringify(initStatus, null, 2), "utf8");
         } catch (e) {}
+    }
+
+    // Assicura la presenza della Job Bar nella status bar di Obsidian
+    try {
+        const jobBarPath = path.join(vaultBasePath, "Scripts", "ag_job_bar.js");
+        delete require.cache[require.resolve(jobBarPath)];
+        require(jobBarPath).ensureJobBar(app);
+    } catch (e) {
+        console.error("[Antigravity] Errore avvio ag_job_bar:", e);
     }
 
     // HUD flottante disaccoppiato (zero Notice invadenti per non intasare la UI)
@@ -1430,7 +1591,9 @@ function openSourcePickerModal(app, options) {
         ...(withStudies ? ["studies"] : [])
     ];
     const allowedTypes = Array.isArray(opts.allowedTypes) && opts.allowedTypes.length ? opts.allowedTypes : defaultTypes;
-    let activeType = allowedTypes[0] || "notebooklm";
+    const selectedTypes = new Set(Array.isArray(opts.preselectedTypes) && opts.preselectedTypes.length
+        ? opts.preselectedTypes
+        : (allowedTypes.length ? [allowedTypes[0]] : ["notebooklm"]));
 
     ensureAgStyle(vaultBasePath);
 
@@ -1443,7 +1606,9 @@ function openSourcePickerModal(app, options) {
         let youtubeUrl = "";
         let webUrl = "";
         let pickedFiles = [];
-        let allowBaseKnowledge = opts.preselectedKnowledge === true ? true : false;
+        let strictSources = (opts.strict_sources !== undefined)
+            ? Boolean(opts.strict_sources)
+            : (opts.preselectedKnowledge === true ? false : true);
         const hideKnowledgeSection = (opts.preselectedKnowledge === false);
 
         const modalContainer = document.createElement("div");
@@ -1483,12 +1648,12 @@ function openSourcePickerModal(app, options) {
         `;
         modalEl.appendChild(headerEl);
 
-        // 2. Sezione 1: Tipo di fonte
+        // 2. Sezione 1: Tipo di fonte (Multi-selezione)
         const section1El = document.createElement("div");
         section1El.className = "ag-picker-section ag-picker-section-types";
         section1El.innerHTML = `
-            <div class="ag-picker-section-label">Tipo di fonte</div>
-            <div class="ag-picker-grid" role="radiogroup" aria-label="Tipo di fonte"></div>
+            <div class="ag-picker-section-label">Tipo di fonte (selezione multipla possibile)</div>
+            <div class="ag-picker-grid" role="group" aria-label="Tipi di fonte"></div>
         `;
         modalEl.appendChild(section1El);
 
@@ -1533,87 +1698,104 @@ function openSourcePickerModal(app, options) {
         const cardElements = {};
         for (const def of cardDefs) {
             if (!allowedTypes.includes(def.type)) continue;
+            const isSelected = selectedTypes.has(def.type);
             const card = document.createElement("div");
-            card.className = "ag-picker-card" + (def.type === activeType ? " is-selected" : "");
-            card.setAttribute("role", "radio");
-            card.setAttribute("aria-checked", def.type === activeType ? "true" : "false");
+            card.className = "ag-picker-card" + (isSelected ? " is-selected" : "");
+            card.setAttribute("role", "checkbox");
+            card.setAttribute("aria-checked", isSelected ? "true" : "false");
+            card.setAttribute("aria-pressed", isSelected ? "true" : "false");
             card.setAttribute("tabindex", "0");
             card.innerHTML = `
                 <div class="ag-picker-card-icon">${def.icon}</div>
                 <div class="ag-picker-card-name">${escapeHtml(def.name)}</div>
                 <div class="ag-picker-card-desc">${escapeHtml(def.desc)}</div>
             `;
-            card.onclick = () => switchActiveType(def.type);
+            card.onclick = () => toggleType(def.type);
             card.onkeydown = (e) => {
                 if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    switchActiveType(def.type);
+                    toggleType(def.type);
                 } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
                     e.preventDefault();
                     const curIdx = allowedTypes.indexOf(def.type);
                     const nextType = allowedTypes[(curIdx + 1) % allowedTypes.length];
-                    if (cardElements[nextType]) {
-                        switchActiveType(nextType);
-                        cardElements[nextType].focus();
-                    }
+                    if (cardElements[nextType]) cardElements[nextType].focus();
                 } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
                     e.preventDefault();
                     const curIdx = allowedTypes.indexOf(def.type);
                     const prevType = allowedTypes[(curIdx - 1 + allowedTypes.length) % allowedTypes.length];
-                    if (cardElements[prevType]) {
-                        switchActiveType(prevType);
-                        cardElements[prevType].focus();
-                    }
+                    if (cardElements[prevType]) cardElements[prevType].focus();
                 }
             };
             cardsGrid.appendChild(card);
             cardElements[def.type] = card;
         }
 
-        // 3. Sezione 2: Contestuale
+        // 3. Sezione 2: Dettagli contestuali per ogni tipo selezionato
         const contextualSectionEl = document.createElement("div");
         contextualSectionEl.className = "ag-picker-section ag-picker-section-contextual";
         contextualSectionEl.innerHTML = `
-            <div class="ag-picker-section-label ag-picker-contextual-label">Dettagli fonte</div>
+            <div class="ag-picker-section-label ag-picker-contextual-label">Dettagli fonti selezionate</div>
             <div class="ag-picker-contextual"></div>
         `;
         modalEl.appendChild(contextualSectionEl);
         const contextualEl = contextualSectionEl.querySelector(".ag-picker-contextual");
 
-        // 4. Sezione 3: Conoscenza AI (Segmented control)
+        // 4. Sezione 3: Conoscenza AI (Toggle «Solo fonti selezionate» valido per TUTTI i tipi)
         const knowledgeSectionEl = document.createElement("div");
         knowledgeSectionEl.className = "ag-picker-section ag-picker-knowledge-section";
         knowledgeSectionEl.innerHTML = `
-            <div class="ag-picker-section-label">Modalità Conoscenza per NotebookLM</div>
+            <div class="ag-picker-section-label">Modalità Conoscenza</div>
+            <div class="ag-picker-knowledge-sub"></div>
             <div class="ag-picker-segmented" role="radiogroup" aria-label="Modalità conoscenza">
-                <button type="button" class="ag-picker-segment ${!allowBaseKnowledge ? 'is-selected' : ''}" role="radio" aria-checked="${!allowBaseKnowledge}">
-                    <span class="ag-picker-seg-title"><span class="ag-picker-seg-icon" aria-hidden="true">🔒</span><span class="ag-picker-seg-label">1. Solo NotebookLM</span></span>
+                <button type="button" class="ag-picker-segment ${strictSources ? 'is-selected' : ''}" role="radio" aria-checked="${strictSources}">
+                    <span class="ag-picker-seg-title"><span class="ag-picker-seg-icon" aria-hidden="true">🔒</span><span class="ag-picker-seg-label">1. Solo fonti selezionate</span></span>
                     <span class="ag-picker-seg-sub">Esclusivo — Zero conoscenza esterna</span>
                 </button>
-                <button type="button" class="ag-picker-segment ${allowBaseKnowledge ? 'is-selected' : ''}" role="radio" aria-checked="${allowBaseKnowledge}">
-                    <span class="ag-picker-seg-title"><span class="ag-picker-seg-icon" aria-hidden="true">🧠+🌐</span><span class="ag-picker-seg-label">2. NotebookLM + AI</span></span>
-                    <span class="ag-picker-seg-sub">Fonte primaria + Conoscenza interna AI</span>
+                <button type="button" class="ag-picker-segment ${!strictSources ? 'is-selected' : ''}" role="radio" aria-checked="${!strictSources}">
+                    <span class="ag-picker-seg-title"><span class="ag-picker-seg-icon" aria-hidden="true">🧠+🌐</span><span class="ag-picker-seg-label">2. Fonti + conoscenza AI</span></span>
+                    <span class="ag-picker-seg-sub">Fonti primarie + Conoscenza interna AI</span>
                 </button>
             </div>
         `;
         modalEl.appendChild(knowledgeSectionEl);
 
         const segButtons = knowledgeSectionEl.querySelectorAll(".ag-picker-segment");
-        segButtons[0].onclick = () => {
-            allowBaseKnowledge = false;
-            segButtons[0].classList.add("is-selected");
-            segButtons[0].setAttribute("aria-checked", "true");
-            segButtons[1].classList.remove("is-selected");
-            segButtons[1].setAttribute("aria-checked", "false");
+        const setStrict = (val) => {
+            strictSources = val;
+            segButtons[0].classList.toggle("is-selected", strictSources);
+            segButtons[0].setAttribute("aria-checked", strictSources ? "true" : "false");
+            segButtons[1].classList.toggle("is-selected", !strictSources);
+            segButtons[1].setAttribute("aria-checked", !strictSources ? "true" : "false");
             updateSummary();
         };
-        segButtons[1].onclick = () => {
-            allowBaseKnowledge = true;
-            segButtons[1].classList.add("is-selected");
-            segButtons[1].setAttribute("aria-checked", "true");
-            segButtons[0].classList.remove("is-selected");
-            segButtons[0].setAttribute("aria-checked", "false");
-            updateSummary();
+        segButtons[0].onclick = () => setStrict(true);
+        segButtons[1].onclick = () => setStrict(false);
+        const handleSegKey = (e) => {
+            if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                e.preventDefault();
+                setStrict(true);
+                segButtons[0].focus();
+            } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                e.preventDefault();
+                setStrict(false);
+                segButtons[1].focus();
+            }
+        };
+        segButtons[0].onkeydown = handleSegKey;
+        segButtons[1].onkeydown = handleSegKey;
+
+        const updateKnowledgeVisibility = () => {
+            if (hideKnowledgeSection || selectedTypes.size === 0) {
+                knowledgeSectionEl.style.display = "none";
+            } else {
+                knowledgeSectionEl.style.display = "";
+                const sub = knowledgeSectionEl.querySelector(".ag-picker-knowledge-sub");
+                if (sub) {
+                    const activeNames = cardDefs.filter(d => selectedTypes.has(d.type)).map(d => d.name);
+                    sub.textContent = `Fonti selezionate: ${activeNames.join(", ")}`;
+                }
+            }
         };
 
         // 5. Footer
@@ -1632,377 +1814,426 @@ function openSourcePickerModal(app, options) {
         const cancelBtn = footerEl.querySelector(".ag-picker-btn-cancel");
         const confirmBtn = footerEl.querySelector(".ag-picker-btn-confirm");
 
-        const isValid = () => {
-            if (activeType === "notebooklm") return selectedNotebooks.length > 0;
-            if (activeType === "youtube") return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/.+/i.test(youtubeUrl.trim());
-            if (activeType === "web") return /^https?:\/\/[^\s$.?#].[^\s]*$/i.test(webUrl.trim());
-            if (activeType === "local_files") return pickedFiles.length > 0;
-            if (activeType === "studies") return true;
+        const isTypeValid = (type) => {
+            if (type === "notebooklm") return selectedNotebooks.length > 0;
+            if (type === "youtube") return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/.+/i.test(youtubeUrl.trim());
+            if (type === "web") return /^https?:\/\/[^\s$.?#].[^\s]*$/i.test(webUrl.trim());
+            if (type === "local_files") return pickedFiles.length > 0;
+            if (type === "studies") return true;
             return false;
+        };
+
+        const isValid = () => {
+            if (selectedTypes.size === 0) return false;
+            for (const t of selectedTypes) {
+                if (!isTypeValid(t)) return false;
+            }
+            return true;
         };
 
         const updateSummary = () => {
             const valid = isValid();
             confirmBtn.disabled = !valid;
 
-            if (activeType === "notebooklm") {
-                if (!selectedNotebooks.length) {
-                    summaryEl.textContent = "NotebookLM · Seleziona almeno un notebook";
-                } else {
-                    const count = selectedNotebooks.length;
-                    const nLabel = count === 1 ? "1 notebook" : `${count} notebook`;
-                    const kLabel = allowBaseKnowledge ? "+ conoscenza AI" : "solo fonti";
-                    summaryEl.textContent = `NotebookLM · ${nLabel} · ${kLabel}`;
-                }
-            } else if (activeType === "youtube") {
-                summaryEl.textContent = valid ? "YouTube · URL pronto" : "YouTube · Inserisci un link YouTube valido";
-            } else if (activeType === "web") {
-                summaryEl.textContent = valid ? "Sito Web · URL pronto" : "Sito Web · Inserisci un URL valido (https://...)";
-            } else if (activeType === "local_files") {
-                if (!pickedFiles.length) {
-                    summaryEl.textContent = "File locali · Seleziona almeno un file";
-                } else {
-                    summaryEl.textContent = `File locali · ${pickedFiles.length} ${pickedFiles.length === 1 ? "file selezionato" : "file selezionati"}`;
-                }
-            } else if (activeType === "studies") {
-                summaryEl.textContent = "Solo studi scientifici · Ricerca automatica";
+            if (selectedTypes.size === 0) {
+                summaryEl.textContent = "Seleziona almeno un tipo di fonte";
+                return;
             }
+
+            const invalidTypes = [];
+            for (const t of selectedTypes) {
+                if (!isTypeValid(t)) invalidTypes.push(t);
+            }
+
+            if (invalidTypes.length > 0) {
+                const missing = invalidTypes.map(t => {
+                    if (t === "notebooklm") return "seleziona notebook";
+                    if (t === "youtube") return "URL YouTube";
+                    if (t === "web") return "URL Web";
+                    if (t === "local_files") return "scegli file locali";
+                    return t;
+                });
+                summaryEl.textContent = `Incompleto: ${missing.join(", ")}`;
+                return;
+            }
+
+            const parts = [];
+            for (const t of cardDefs.map(d => d.type)) {
+                if (!selectedTypes.has(t)) continue;
+                if (t === "notebooklm") {
+                    const count = selectedNotebooks.length;
+                    parts.push(`NotebookLM (${count} ${count === 1 ? "notebook" : "notebook"})`);
+                } else if (t === "youtube") {
+                    parts.push("YouTube");
+                } else if (t === "web") {
+                    parts.push("Web");
+                } else if (t === "local_files") {
+                    parts.push(`File locali (${pickedFiles.length})`);
+                } else if (t === "studies") {
+                    parts.push("Studi scientifici");
+                }
+            }
+            const kLabel = strictSources ? "solo fonti" : "+ conoscenza AI";
+            summaryEl.textContent = `${parts.join(" + ")} · ${kLabel}`;
         };
 
-        const switchActiveType = (newType) => {
-            activeType = newType;
+        const toggleType = (type) => {
+            if (selectedTypes.has(type)) {
+                selectedTypes.delete(type);
+            } else {
+                selectedTypes.add(type);
+            }
             for (const [t, card] of Object.entries(cardElements)) {
-                const isSel = t === activeType;
+                const isSel = selectedTypes.has(t);
                 card.classList.toggle("is-selected", isSel);
                 card.setAttribute("aria-checked", isSel ? "true" : "false");
+                card.setAttribute("aria-pressed", isSel ? "true" : "false");
             }
-
-            if (activeType === "notebooklm" && !hideKnowledgeSection) {
-                knowledgeSectionEl.style.display = "";
-            } else {
-                knowledgeSectionEl.style.display = "none";
-            }
-
             renderContextual();
+            updateKnowledgeVisibility();
             updateSummary();
         };
 
         const renderContextual = () => {
             contextualEl.innerHTML = "";
 
-            if (activeType === "notebooklm") {
-                const searchWrap = document.createElement("div");
-                searchWrap.className = "ag-picker-search-wrap";
-                searchWrap.innerHTML = `<input type="search" class="ag-picker-input ag-picker-search" placeholder="Cerca notebook per titolo o ID..." value="${escapeHtml(notebookSearchQuery)}" aria-label="Cerca notebook">`;
-                contextualEl.appendChild(searchWrap);
-                const sInput = searchWrap.querySelector("input");
-                sInput.oninput = (e) => {
-                    notebookSearchQuery = e.target.value;
-                    renderNotebookList();
-                };
+            if (selectedTypes.size === 0) {
+                const emptyEl = document.createElement("div");
+                emptyEl.className = "ag-picker-empty-state";
+                emptyEl.textContent = "Seleziona almeno un tipo di fonte sopra per configurarne i dettagli.";
+                contextualEl.appendChild(emptyEl);
+                return;
+            }
 
-                const counterEl = document.createElement("div");
-                counterEl.className = "ag-picker-counter";
-                contextualEl.appendChild(counterEl);
+            const isMulti = selectedTypes.size > 1;
 
-                const listContainer = document.createElement("div");
-                listContainer.className = "ag-picker-notebook-list";
-                let notebooksLoading = !validNotebooks.length && !!opts.notebooksPromise;
-                contextualEl.appendChild(listContainer);
+            for (const def of cardDefs) {
+                if (!selectedTypes.has(def.type)) continue;
 
-                const manualRow = document.createElement("div");
-                manualRow.className = "ag-picker-manual-row";
-                manualRow.innerHTML = `
-                    <input type="text" class="ag-picker-input ag-picker-manual-input" placeholder="Aggiungi ID o Titolo personalizzato...">
-                    <button type="button" class="ag-picker-btn ag-picker-manual-btn">Aggiungi</button>
-                `;
-                contextualEl.appendChild(manualRow);
-                const manualInput = manualRow.querySelector(".ag-picker-manual-input");
-                const manualAddBtn = manualRow.querySelector(".ag-picker-manual-btn");
+                const blockEl = document.createElement("div");
+                blockEl.className = "ag-picker-type-block ag-picker-type-block-" + def.type;
 
-                const handleAddManual = () => {
-                    const val = manualInput.value.trim();
-                    if (val) {
-                        if (!selectedNotebooks.some(s => s.id === val)) {
-                            selectedNotebooks.push({ id: val, title: val, sources: 0 });
-                        }
-                        if (!validNotebooks.some(s => s.id === val)) {
-                            validNotebooks.unshift({ id: val, title: val, sources: 0 });
-                        }
-                        manualInput.value = "";
-                        renderNotebookList();
-                        updateSummary();
-                    }
-                };
-                manualAddBtn.onclick = handleAddManual;
-                manualInput.onkeydown = (e) => {
-                    if (e.key === "Enter") {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        handleAddManual();
-                    }
-                };
-
-                const renderNotebookList = () => {
-                    if (!modalContainer.isConnected) return;
-                    listContainer.innerHTML = "";
-                    if (notebooksLoading) {
-                        listContainer.setAttribute("aria-busy", "true");
-                        listContainer.setAttribute("aria-label", "Caricamento dei notebook…");
-                        listContainer.innerHTML = '<span class="ag-picker-sr-only">Caricamento dei notebook…</span>' + Array.from({ length: 4 }, () => '<div class="ag-picker-skeleton"><div class="ag-picker-skeleton-bar ag-picker-skeleton-title"></div><div class="ag-picker-skeleton-bar ag-picker-skeleton-meta"></div></div>').join("");
-                        return;
-                    }
-                    listContainer.removeAttribute("aria-busy");
-                    const count = selectedNotebooks.length;
-                    counterEl.textContent = count === 0
-                        ? "Nessun notebook selezionato"
-                        : (count === 1 ? "1 notebook selezionato" : `${count} notebook selezionati`);
-
-                    const q = notebookSearchQuery.trim().toLowerCase();
-                    const filtered = validNotebooks.filter(nb => !q || (nb.title || "").toLowerCase().includes(q) || (nb.id || "").toLowerCase().includes(q));
-
-                    if (filtered.length === 0) {
-                        const emptyEl = document.createElement("div");
-                        emptyEl.className = "ag-picker-empty-state";
-                        emptyEl.textContent = validNotebooks.length === 0
-                            ? "Nessun notebook trovato: inserisci un ID manuale qui sotto"
-                            : "Nessun notebook corrispondente alla ricerca";
-                        listContainer.appendChild(emptyEl);
-                        return;
-                    }
-
-                    for (const nb of filtered) {
-                        const isSelected = selectedNotebooks.some(s => s.id === nb.id);
-                        const itemEl = document.createElement("div");
-                        itemEl.className = "ag-picker-notebook-item" + (isSelected ? " is-selected" : "");
-                        itemEl.setAttribute("role", "checkbox");
-                        itemEl.setAttribute("aria-checked", isSelected ? "true" : "false");
-                        itemEl.setAttribute("tabindex", "0");
-
-                        const shortId = nb.id.length > 8 ? `${nb.id.slice(0, 8)}…` : nb.id;
-                        const sourcesText = `${nb.sources || 0} ${nb.sources === 1 ? 'fonte' : 'fonti'}`;
-
-                        itemEl.innerHTML = `
-                            <input type="checkbox" class="ag-picker-checkbox" ${isSelected ? 'checked' : ''} tabindex="-1">
-                            <div class="ag-picker-notebook-info">
-                                <div class="ag-picker-notebook-title">${escapeHtml(nb.title || "(Senza titolo)")}</div>
-                                <div class="ag-picker-notebook-meta">${sourcesText} · <span class="ag-picker-mono">${escapeHtml(shortId)}</span></div>
-                            </div>
-                        `;
-
-                        const toggle = () => {
-                            const idx = selectedNotebooks.findIndex(s => s.id === nb.id);
-                            if (idx >= 0) {
-                                selectedNotebooks.splice(idx, 1);
-                            } else {
-                                selectedNotebooks.push({
-                                    id: nb.id,
-                                    title: nb.title || nb.id,
-                                    sources: nb.sources || 0
-                                });
-                            }
-                            renderNotebookList();
-                            updateSummary();
-                        };
-
-                        itemEl.onclick = toggle;
-                        itemEl.onkeydown = (e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                toggle();
-                            }
-                        };
-                        listContainer.appendChild(itemEl);
-                    }
-                };
-
-                renderNotebookList();
-                if (opts.notebooksPromise) {
-                    const hadCached = validNotebooks.length > 0;
-                    opts.notebooksPromise.then((fresh) => {
-                        if (!modalContainer.isConnected) return;
-                        const merged = new Map();
-                        for (const nb of [...(Array.isArray(fresh) ? fresh : []), ...validNotebooks, ...selectedNotebooks]) {
-                            if (nb && nb.id && !merged.has(nb.id)) merged.set(nb.id, nb);
-                        }
-                        validNotebooks.splice(0, validNotebooks.length, ...merged.values());
-                        notebooksLoading = false;
-                        renderNotebookList();
-                        updateSummary();
-                    }).catch(() => {
-                        if (!modalContainer.isConnected) return;
-                        notebooksLoading = false;
-                        if (!hadCached) {
-                            renderNotebookList();
-                            const error = document.createElement("div");
-                            error.className = "ag-picker-muted-hint";
-                            error.textContent = "Aggiornamento dei notebook non riuscito.";
-                            listContainer.appendChild(error);
-                        }
-                    });
+                if (isMulti) {
+                    const blockTitle = document.createElement("div");
+                    blockTitle.className = "ag-picker-sub-label";
+                    blockTitle.textContent = `${def.icon} ${def.name}`;
+                    blockEl.appendChild(blockTitle);
                 }
 
-            } else if (activeType === "youtube") {
-                const wrap = document.createElement("div");
-                wrap.className = "ag-picker-field-wrap";
-                wrap.innerHTML = `
-                    <label class="ag-picker-label" for="ag-yt-url-input">URL del Video YouTube</label>
-                    <input type="url" id="ag-yt-url-input" class="ag-picker-input" placeholder="https://www.youtube.com/watch?v=..." value="${escapeHtml(youtubeUrl)}">
-                    <div class="ag-picker-error" style="display: none;"></div>
-                `;
-                contextualEl.appendChild(wrap);
-                const input = wrap.querySelector("input");
-                const errorEl = wrap.querySelector(".ag-picker-error");
+                if (def.type === "notebooklm") {
+                    const searchWrap = document.createElement("div");
+                    searchWrap.className = "ag-picker-search-wrap";
+                    searchWrap.innerHTML = `<input type="search" class="ag-picker-input ag-picker-search" placeholder="Cerca notebook per titolo o ID..." value="${escapeHtml(notebookSearchQuery)}" aria-label="Cerca notebook">`;
+                    blockEl.appendChild(searchWrap);
+                    const sInput = searchWrap.querySelector("input");
+                    sInput.oninput = (e) => {
+                        notebookSearchQuery = e.target.value;
+                        renderNotebookList();
+                    };
 
-                input.oninput = (e) => {
-                    youtubeUrl = e.target.value;
-                    const val = youtubeUrl.trim();
-                    const isYt = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/.+/i.test(val);
-                    if (!val) {
-                        errorEl.style.display = "none";
-                    } else if (!isYt) {
-                        errorEl.textContent = "Inserisci un URL valido di YouTube (es. https://www.youtube.com/watch?v=...)";
-                        errorEl.style.display = "block";
-                    } else {
-                        errorEl.style.display = "none";
-                    }
-                    updateSummary();
-                };
-                setTimeout(() => input.focus(), 50);
+                    const counterEl = document.createElement("div");
+                    counterEl.className = "ag-picker-counter";
+                    blockEl.appendChild(counterEl);
 
-            } else if (activeType === "web") {
-                const wrap = document.createElement("div");
-                wrap.className = "ag-picker-field-wrap";
-                wrap.innerHTML = `
-                    <label class="ag-picker-label" for="ag-web-url-input">URL della Pagina Web</label>
-                    <input type="url" id="ag-web-url-input" class="ag-picker-input" placeholder="https://example.com/articolo..." value="${escapeHtml(webUrl)}">
-                    <div class="ag-picker-error" style="display: none;"></div>
-                `;
-                contextualEl.appendChild(wrap);
-                const input = wrap.querySelector("input");
-                const errorEl = wrap.querySelector(".ag-picker-error");
+                    const listContainer = document.createElement("div");
+                    listContainer.className = "ag-picker-notebook-list";
+                    let notebooksLoading = !validNotebooks.length && !!opts.notebooksPromise;
+                    blockEl.appendChild(listContainer);
 
-                input.oninput = (e) => {
-                    webUrl = e.target.value;
-                    const val = webUrl.trim();
-                    const isWeb = /^https?:\/\/[^\s$.?#].[^\s]*$/i.test(val);
-                    if (!val) {
-                        errorEl.style.display = "none";
-                    } else if (!isWeb) {
-                        errorEl.textContent = "Inserisci un URL web valido (es. https://...)";
-                        errorEl.style.display = "block";
-                    } else {
-                        errorEl.style.display = "none";
-                    }
-                    updateSummary();
-                };
-                setTimeout(() => input.focus(), 50);
+                    const manualRow = document.createElement("div");
+                    manualRow.className = "ag-picker-manual-row";
+                    manualRow.innerHTML = `
+                        <input type="text" class="ag-picker-input ag-picker-manual-input" placeholder="Aggiungi ID o Titolo personalizzato...">
+                        <button type="button" class="ag-picker-btn ag-picker-manual-btn">Aggiungi</button>
+                    `;
+                    blockEl.appendChild(manualRow);
+                    const manualInput = manualRow.querySelector(".ag-picker-manual-input");
+                    const manualAddBtn = manualRow.querySelector(".ag-picker-manual-btn");
 
-            } else if (activeType === "local_files") {
-                const wrap = document.createElement("div");
-                wrap.className = "ag-picker-field-wrap";
-                wrap.innerHTML = `
-                    <div class="ag-picker-actions-row">
-                        <button type="button" class="ag-picker-btn ag-picker-browse-btn">📁 Scegli file dal computer…</button>
-                        <span class="ag-picker-muted-hint">PDF, TXT o Markdown</span>
-                    </div>
-                    <div class="ag-picker-file-list"></div>
-                    <div class="ag-picker-vault-fallback">
-                        <div class="ag-picker-section-label" style="margin-top: 8px;">Oppure scegli dal vault:</div>
-                        <input type="search" class="ag-picker-input ag-picker-vault-search" placeholder="Cerca nota o file nel vault...">
-                        <div class="ag-picker-vault-results" style="display: none;"></div>
-                    </div>
-                `;
-                contextualEl.appendChild(wrap);
-
-                const browseBtn = wrap.querySelector(".ag-picker-browse-btn");
-                const fileListEl = wrap.querySelector(".ag-picker-file-list");
-                const vaultSearchInput = wrap.querySelector(".ag-picker-vault-search");
-                const vaultResultsEl = wrap.querySelector(".ag-picker-vault-results");
-
-                const renderFileList = () => {
-                    fileListEl.innerHTML = "";
-                    if (!pickedFiles.length) {
-                        fileListEl.innerHTML = `<div class="ag-picker-empty-state" style="padding: 8px 0;">Nessun file selezionato</div>`;
-                        return;
-                    }
-                    for (let i = 0; i < pickedFiles.length; i++) {
-                        const filePath = pickedFiles[i];
-                        const itemEl = document.createElement("div");
-                        itemEl.className = "ag-picker-file-item";
-                        itemEl.innerHTML = `
-                            <span class="ag-picker-file-icon">📄</span>
-                            <span class="ag-picker-file-path" title="${escapeHtml(filePath)}">${escapeHtml(path.basename(filePath))}</span>
-                            <button type="button" class="ag-picker-file-remove" aria-label="Rimuovi file" title="Rimuovi">✕</button>
-                        `;
-                        itemEl.querySelector(".ag-picker-file-remove").onclick = () => {
-                            pickedFiles.splice(i, 1);
-                            renderFileList();
-                            updateSummary();
-                        };
-                        fileListEl.appendChild(itemEl);
-                    }
-                };
-
-                browseBtn.onclick = async () => {
-                    browseBtn.disabled = true;
-                    try {
-                        const chosen = await pickLocalFilesWithAppleScript();
-                        if (Array.isArray(chosen) && chosen.length > 0) {
-                            for (const f of chosen) {
-                                if (!pickedFiles.includes(f)) pickedFiles.push(f);
+                    const handleAddManual = () => {
+                        const val = manualInput.value.trim();
+                        if (val) {
+                            if (!selectedNotebooks.some(s => s.id === val)) {
+                                selectedNotebooks.push({ id: val, title: val, sources: 0 });
                             }
-                            renderFileList();
+                            if (!validNotebooks.some(s => s.id === val)) {
+                                validNotebooks.unshift({ id: val, title: val, sources: 0 });
+                            }
+                            manualInput.value = "";
+                            renderNotebookList();
                             updateSummary();
                         }
-                    } catch (_) {}
-                    browseBtn.disabled = false;
-                };
+                    };
+                    manualAddBtn.onclick = handleAddManual;
+                    manualInput.onkeydown = (e) => {
+                        if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleAddManual();
+                        }
+                    };
 
-                vaultSearchInput.oninput = (e) => {
-                    const q = e.target.value.trim().toLowerCase();
-                    vaultResultsEl.innerHTML = "";
-                    if (!q || !app || !app.vault) {
-                        vaultResultsEl.style.display = "none";
-                        return;
-                    }
-                    const files = app.vault.getFiles().filter(f => !f.path.startsWith("."));
-                    const matches = files.filter(f => f.path.toLowerCase().includes(q)).slice(0, 5);
-                    if (!matches.length) {
-                        vaultResultsEl.innerHTML = `<div class="ag-picker-empty-state">Nessun file trovato nel vault</div>`;
-                        vaultResultsEl.style.display = "block";
-                        return;
-                    }
-                    for (const f of matches) {
-                        const rEl = document.createElement("div");
-                        rEl.className = "ag-picker-vault-result-item";
-                        rEl.textContent = `📄 ${f.path}`;
-                        rEl.onclick = () => {
-                            const full = path.join(vaultBasePath, f.path);
-                            if (!pickedFiles.includes(full)) pickedFiles.push(full);
-                            vaultSearchInput.value = "";
-                            vaultResultsEl.style.display = "none";
-                            renderFileList();
+                    const renderNotebookList = () => {
+                        if (!modalContainer.isConnected) return;
+                        listContainer.innerHTML = "";
+                        if (notebooksLoading) {
+                            listContainer.setAttribute("aria-busy", "true");
+                            listContainer.setAttribute("aria-label", "Caricamento dei notebook…");
+                            listContainer.innerHTML = '<span class="ag-picker-sr-only">Caricamento dei notebook…</span>' + Array.from({ length: 4 }, () => '<div class="ag-picker-skeleton"><div class="ag-picker-skeleton-bar ag-picker-skeleton-title"></div><div class="ag-picker-skeleton-bar ag-picker-skeleton-meta"></div></div>').join("");
+                            return;
+                        }
+                        listContainer.removeAttribute("aria-busy");
+                        const count = selectedNotebooks.length;
+                        counterEl.textContent = count === 0
+                            ? "Nessun notebook selezionato"
+                            : (count === 1 ? "1 notebook selezionato" : `${count} notebook selezionati`);
+
+                        const q = notebookSearchQuery.trim().toLowerCase();
+                        const filtered = validNotebooks.filter(nb => !q || (nb.title || "").toLowerCase().includes(q) || (nb.id || "").toLowerCase().includes(q));
+
+                        if (filtered.length === 0) {
+                            const emptyEl = document.createElement("div");
+                            emptyEl.className = "ag-picker-empty-state";
+                            emptyEl.textContent = validNotebooks.length === 0
+                                ? "Nessun notebook trovato: inserisci un ID manuale qui sotto"
+                                : "Nessun notebook corrispondente alla ricerca";
+                            listContainer.appendChild(emptyEl);
+                            return;
+                        }
+
+                        for (const nb of filtered) {
+                            const isSelected = selectedNotebooks.some(s => s.id === nb.id);
+                            const itemEl = document.createElement("div");
+                            itemEl.className = "ag-picker-notebook-item" + (isSelected ? " is-selected" : "");
+                            itemEl.setAttribute("role", "checkbox");
+                            itemEl.setAttribute("aria-checked", isSelected ? "true" : "false");
+                            itemEl.setAttribute("tabindex", "0");
+
+                            const shortId = nb.id.length > 8 ? `${nb.id.slice(0, 8)}…` : nb.id;
+                            const sourcesText = `${nb.sources || 0} ${nb.sources === 1 ? 'fonte' : 'fonti'}`;
+
+                            itemEl.innerHTML = `
+                                <input type="checkbox" class="ag-picker-checkbox" ${isSelected ? 'checked' : ''} tabindex="-1">
+                                <div class="ag-picker-notebook-info">
+                                    <div class="ag-picker-notebook-title">${escapeHtml(nb.title || "(Senza titolo)")}</div>
+                                    <div class="ag-picker-notebook-meta">${sourcesText} · <span class="ag-picker-mono">${escapeHtml(shortId)}</span></div>
+                                </div>
+                            `;
+
+                            const toggle = () => {
+                                const idx = selectedNotebooks.findIndex(s => s.id === nb.id);
+                                if (idx >= 0) {
+                                    selectedNotebooks.splice(idx, 1);
+                                } else {
+                                    selectedNotebooks.push({
+                                        id: nb.id,
+                                        title: nb.title || nb.id,
+                                        sources: nb.sources || 0
+                                    });
+                                }
+                                renderNotebookList();
+                                updateSummary();
+                            };
+
+                            itemEl.onclick = toggle;
+                            itemEl.onkeydown = (e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    toggle();
+                                }
+                            };
+                            listContainer.appendChild(itemEl);
+                        }
+                    };
+
+                    renderNotebookList();
+                    if (opts.notebooksPromise) {
+                        const hadCached = validNotebooks.length > 0;
+                        opts.notebooksPromise.then((fresh) => {
+                            if (!modalContainer.isConnected) return;
+                            const merged = new Map();
+                            for (const nb of [...(Array.isArray(fresh) ? fresh : []), ...validNotebooks, ...selectedNotebooks]) {
+                                if (nb && nb.id && !merged.has(nb.id)) merged.set(nb.id, nb);
+                            }
+                            validNotebooks.splice(0, validNotebooks.length, ...merged.values());
+                            notebooksLoading = false;
+                            renderNotebookList();
                             updateSummary();
-                        };
-                        vaultResultsEl.appendChild(rEl);
+                        }).catch(() => {
+                            if (!modalContainer.isConnected) return;
+                            notebooksLoading = false;
+                            if (!hadCached) {
+                                renderNotebookList();
+                                const error = document.createElement("div");
+                                error.className = "ag-picker-muted-hint";
+                                error.textContent = "Aggiornamento dei notebook non riuscito.";
+                                listContainer.appendChild(error);
+                            }
+                        });
                     }
-                    vaultResultsEl.style.display = "block";
-                };
 
-                renderFileList();
+                } else if (def.type === "youtube") {
+                    const wrap = document.createElement("div");
+                    wrap.className = "ag-picker-field-wrap";
+                    wrap.innerHTML = `
+                        <label class="ag-picker-label" for="ag-yt-url-input">URL del Video YouTube</label>
+                        <input type="url" id="ag-yt-url-input" class="ag-picker-input" placeholder="https://www.youtube.com/watch?v=..." value="${escapeHtml(youtubeUrl)}">
+                        <div class="ag-picker-error" style="display: none;"></div>
+                    `;
+                    blockEl.appendChild(wrap);
+                    const input = wrap.querySelector("input");
+                    const errorEl = wrap.querySelector(".ag-picker-error");
 
-            } else if (activeType === "studies") {
-                const info = document.createElement("div");
-                info.className = "ag-picker-info-box";
-                info.innerHTML = `
-                    <div class="ag-picker-info-icon">🔬</div>
-                    <div class="ag-picker-info-text">
-                        <strong>Ricerca e analisi scientifica autonoma</strong>
-                        <p>L'AI effettuerà una scansione su banche dati scientifiche (PubMed, PMC, arXiv), valutando criticamente la gerarchia delle evidenze (meta-analisi, RCT) per redigere la nota.</p>
-                    </div>
-                `;
-                contextualEl.appendChild(info);
+                    input.oninput = (e) => {
+                        youtubeUrl = e.target.value;
+                        const val = youtubeUrl.trim();
+                        const isYt = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/.+/i.test(val);
+                        if (!val) {
+                            errorEl.style.display = "none";
+                        } else if (!isYt) {
+                            errorEl.textContent = "Inserisci un URL valido di YouTube (es. https://www.youtube.com/watch?v=...)";
+                            errorEl.style.display = "block";
+                        } else {
+                            errorEl.style.display = "none";
+                        }
+                        updateSummary();
+                    };
+
+                } else if (def.type === "web") {
+                    const wrap = document.createElement("div");
+                    wrap.className = "ag-picker-field-wrap";
+                    wrap.innerHTML = `
+                        <label class="ag-picker-label" for="ag-web-url-input">URL della Pagina Web</label>
+                        <input type="url" id="ag-web-url-input" class="ag-picker-input" placeholder="https://example.com/articolo..." value="${escapeHtml(webUrl)}">
+                        <div class="ag-picker-error" style="display: none;"></div>
+                    `;
+                    blockEl.appendChild(wrap);
+                    const input = wrap.querySelector("input");
+                    const errorEl = wrap.querySelector(".ag-picker-error");
+
+                    input.oninput = (e) => {
+                        webUrl = e.target.value;
+                        const val = webUrl.trim();
+                        const isWeb = /^https?:\/\/[^\s$.?#].[^\s]*$/i.test(val);
+                        if (!val) {
+                            errorEl.style.display = "none";
+                        } else if (!isWeb) {
+                            errorEl.textContent = "Inserisci un URL web valido (es. https://...)";
+                            errorEl.style.display = "block";
+                        } else {
+                            errorEl.style.display = "none";
+                        }
+                        updateSummary();
+                    };
+
+                } else if (def.type === "local_files") {
+                    const wrap = document.createElement("div");
+                    wrap.className = "ag-picker-field-wrap";
+                    wrap.innerHTML = `
+                        <div class="ag-picker-actions-row">
+                            <button type="button" class="ag-picker-btn ag-picker-browse-btn">📁 Scegli file dal computer…</button>
+                            <span class="ag-picker-muted-hint">PDF, TXT o Markdown</span>
+                        </div>
+                        <div class="ag-picker-file-list"></div>
+                        <div class="ag-picker-vault-fallback">
+                            <div class="ag-picker-section-label" style="margin-top: 8px;">Oppure scegli dal vault:</div>
+                            <input type="search" class="ag-picker-input ag-picker-vault-search" placeholder="Cerca nota o file nel vault...">
+                            <div class="ag-picker-vault-results" style="display: none;"></div>
+                        </div>
+                    `;
+                    blockEl.appendChild(wrap);
+
+                    const browseBtn = wrap.querySelector(".ag-picker-browse-btn");
+                    const fileListEl = wrap.querySelector(".ag-picker-file-list");
+                    const vaultSearchInput = wrap.querySelector(".ag-picker-vault-search");
+                    const vaultResultsEl = wrap.querySelector(".ag-picker-vault-results");
+
+                    const renderFileList = () => {
+                        fileListEl.innerHTML = "";
+                        if (!pickedFiles.length) {
+                            fileListEl.innerHTML = `<div class="ag-picker-empty-state" style="padding: 8px 0;">Nessun file selezionato</div>`;
+                            return;
+                        }
+                        for (let i = 0; i < pickedFiles.length; i++) {
+                            const filePath = pickedFiles[i];
+                            const itemEl = document.createElement("div");
+                            itemEl.className = "ag-picker-file-item";
+                            itemEl.innerHTML = `
+                                <span class="ag-picker-file-icon">📄</span>
+                                <span class="ag-picker-file-path" title="${escapeHtml(filePath)}">${escapeHtml(path.basename(filePath))}</span>
+                                <button type="button" class="ag-picker-file-remove" aria-label="Rimuovi file" title="Rimuovi">✕</button>
+                            `;
+                            itemEl.querySelector(".ag-picker-file-remove").onclick = () => {
+                                pickedFiles.splice(i, 1);
+                                renderFileList();
+                                updateSummary();
+                            };
+                            fileListEl.appendChild(itemEl);
+                        }
+                    };
+
+                    browseBtn.onclick = async () => {
+                        browseBtn.disabled = true;
+                        try {
+                            const chosen = await pickLocalFilesWithAppleScript();
+                            if (Array.isArray(chosen) && chosen.length > 0) {
+                                for (const f of chosen) {
+                                    if (!pickedFiles.includes(f)) pickedFiles.push(f);
+                                }
+                                renderFileList();
+                                updateSummary();
+                            }
+                        } catch (_) {}
+                        browseBtn.disabled = false;
+                    };
+
+                    vaultSearchInput.oninput = (e) => {
+                        const q = e.target.value.trim().toLowerCase();
+                        vaultResultsEl.innerHTML = "";
+                        if (!q || !app || !app.vault) {
+                            vaultResultsEl.style.display = "none";
+                            return;
+                        }
+                        const files = app.vault.getFiles().filter(f => !f.path.startsWith("."));
+                        const matches = files.filter(f => f.path.toLowerCase().includes(q)).slice(0, 5);
+                        if (!matches.length) {
+                            vaultResultsEl.innerHTML = `<div class="ag-picker-empty-state">Nessun file trovato nel vault</div>`;
+                            vaultResultsEl.style.display = "block";
+                            return;
+                        }
+                        for (const f of matches) {
+                            const rEl = document.createElement("div");
+                            rEl.className = "ag-picker-vault-result-item";
+                            rEl.textContent = `📄 ${f.path}`;
+                            rEl.onclick = () => {
+                                const full = path.join(vaultBasePath, f.path);
+                                if (!pickedFiles.includes(full)) pickedFiles.push(full);
+                                vaultSearchInput.value = "";
+                                vaultResultsEl.style.display = "none";
+                                renderFileList();
+                                updateSummary();
+                            };
+                            vaultResultsEl.appendChild(rEl);
+                        }
+                        vaultResultsEl.style.display = "block";
+                    };
+
+                    renderFileList();
+
+                } else if (def.type === "studies") {
+                    const info = document.createElement("div");
+                    info.className = "ag-picker-info-box";
+                    info.innerHTML = `
+                        <div class="ag-picker-info-icon">🔬</div>
+                        <div class="ag-picker-info-text">
+                            <strong>Ricerca e analisi scientifica autonoma</strong>
+                            <p>L'AI effettuerà una scansione su banche dati scientifiche (PubMed, PMC, arXiv), valutando criticamente la gerarchia delle evidenze (meta-analisi, RCT) per redigere la nota.</p>
+                        </div>
+                    `;
+                    blockEl.appendChild(info);
+                }
+
+                contextualEl.appendChild(blockEl);
             }
         };
 
@@ -2018,43 +2249,74 @@ function openSourcePickerModal(app, options) {
             submitted = true;
             cleanup();
 
-            if (activeType === "studies") {
-                resolve({
-                    type: "studies",
-                    label: "Studi scientifici (ricerca automatica)",
-                    value: ""
-                });
-            } else if (activeType === "youtube") {
-                resolve({
-                    type: "youtube",
-                    label: "Video YouTube",
-                    value: youtubeUrl.trim()
-                });
-            } else if (activeType === "web") {
-                resolve({
-                    type: "web",
-                    label: "Sito Online",
-                    value: webUrl.trim()
-                });
-            } else if (activeType === "local_files") {
-                resolve({
-                    type: "local_files",
-                    label: `File Locali (${pickedFiles.length} file)`,
-                    value: pickedFiles
-                });
-            } else if (activeType === "notebooklm") {
-                const titlesSummary = selectedNotebooks.map(n => n.title).join(" + ");
-                resolve({
-                    type: "notebooklm",
-                    label: selectedNotebooks.length === 1
-                        ? `NotebookLM: ${selectedNotebooks[0].title}`
-                        : `NotebookLM Multiplo (${selectedNotebooks.length} fonti: ${titlesSummary})`,
-                    value: selectedNotebooks,
-                    notebooks: selectedNotebooks.map(n => n.id),
-                    notebook_details: selectedNotebooks,
-                    allow_base_knowledge: allowBaseKnowledge
-                });
+            const sources = [];
+            for (const def of cardDefs) {
+                if (!selectedTypes.has(def.type)) continue;
+
+                if (def.type === "notebooklm") {
+                    const titlesSummary = selectedNotebooks.map(n => n.title).join(" + ");
+                    sources.push({
+                        type: "notebooklm",
+                        label: selectedNotebooks.length === 1
+                            ? `NotebookLM: ${selectedNotebooks[0].title}`
+                            : `NotebookLM Multiplo (${selectedNotebooks.length} fonti: ${titlesSummary})`,
+                        value: selectedNotebooks,
+                        notebooks: selectedNotebooks.map(n => n.id),
+                        notebook_details: selectedNotebooks
+                    });
+                } else if (def.type === "youtube") {
+                    sources.push({
+                        type: "youtube",
+                        label: "Video YouTube",
+                        value: youtubeUrl.trim()
+                    });
+                } else if (def.type === "web") {
+                    sources.push({
+                        type: "web",
+                        label: "Sito Online",
+                        value: webUrl.trim()
+                    });
+                } else if (def.type === "local_files") {
+                    sources.push({
+                        type: "local_files",
+                        label: `File Locali (${pickedFiles.length} file)`,
+                        value: [...pickedFiles]
+                    });
+                } else if (def.type === "studies") {
+                    sources.push({
+                        type: "studies",
+                        label: "Studi scientifici (ricerca automatica)",
+                        value: ""
+                    });
+                }
             }
+
+            const allNotebooks = [];
+            const allNotebookDetails = [];
+            for (const s of sources) {
+                if (s.type === "notebooklm") {
+                    if (Array.isArray(s.notebooks)) {
+                        for (const id of s.notebooks) if (!allNotebooks.includes(id)) allNotebooks.push(id);
+                    }
+                    if (Array.isArray(s.notebook_details)) {
+                        for (const d of s.notebook_details) if (!allNotebookDetails.some(x => x.id === d.id)) allNotebookDetails.push(d);
+                    }
+                }
+            }
+
+            const label = sources.length === 1 ? sources[0].label : sources.map(s => s.label).join(" + ");
+            const result = {
+                type: sources.length === 1 ? sources[0].type : "multi",
+                label: label,
+                value: sources.length === 1 ? sources[0].value : sources,
+                sources: sources,
+                strict_sources: strictSources,
+                allow_base_knowledge: !strictSources,
+                notebooks: allNotebooks,
+                notebook_details: allNotebookDetails
+            };
+
+            resolve(result);
         };
 
         confirmBtn.onclick = doConfirm;
@@ -2082,7 +2344,11 @@ function openSourcePickerModal(app, options) {
 
             if (e.key === "Enter") {
                 const target = e.target;
-                if (target && target.classList && target.classList.contains("ag-picker-manual-input")) {
+                if (target && target.classList && (
+                    target.classList.contains("ag-picker-manual-input") ||
+                    target.classList.contains("ag-picker-search") ||
+                    target.classList.contains("ag-picker-vault-search")
+                )) {
                     return;
                 }
                 if (target && target.tagName === "BUTTON") {
@@ -2099,11 +2365,14 @@ function openSourcePickerModal(app, options) {
         document.addEventListener("keydown", handleKeydown, true);
         document.body.appendChild(modalContainer);
 
-        switchActiveType(activeType);
+        renderContextual();
+        updateKnowledgeVisibility();
+        updateSummary();
 
         setTimeout(() => {
-            if (allowedTypes.length > 1 && cardElements[activeType]) {
-                cardElements[activeType].focus();
+            const firstSelected = cardDefs.find(d => selectedTypes.has(d.type));
+            if (firstSelected && cardElements[firstSelected.type]) {
+                cardElements[firstSelected.type].focus();
             } else {
                 const firstInput = modalEl.querySelector(".ag-picker-input");
                 if (firstInput) firstInput.focus();
@@ -3601,19 +3870,44 @@ module.exports = async function (tp) {
         // 1. Pulizia e reset totale dell'ambiente per idempotenza assoluta
         preRunCleanup(vaultBasePath, targetRelPath);
 
-        // 2. Costruzione payload del job con supporto Multi-Notebook
-        const isNotebookMulti = sourceResult && sourceResult.type === "notebooklm";
-        const notebooksArray = isNotebookMulti
-            ? (sourceResult.notebooks || (Array.isArray(sourceResult.value) ? sourceResult.value.map(v => typeof v === 'object' ? (v.id || v.title) : v) : [sourceResult.value?.id || sourceResult.value]))
-            : [];
-        const notebookDetailsArray = isNotebookMulti
-            ? (sourceResult.notebook_details || (Array.isArray(sourceResult.value) ? sourceResult.value : []))
-            : [];
-        const allowBaseKnowledge = isNotebookMulti
-            ? (sourceResult && sourceResult.allow_base_knowledge === true)
-            : true;
+        // 2. Costruzione payload del job con supporto Multi-Fonte e Contratto AutomationJob
+        const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const canonicalSources = (sourceResult && Array.isArray(sourceResult.sources) && sourceResult.sources.length > 0)
+            ? sourceResult.sources
+            : (sourceResult ? [sourceResult] : []);
+
+        const strictSources = (sourceResult && sourceResult.strict_sources !== undefined)
+            ? Boolean(sourceResult.strict_sources)
+            : ((sourceResult && sourceResult.allow_base_knowledge !== undefined)
+                ? !sourceResult.allow_base_knowledge
+                : ((sourceResult && sourceResult.type === "notebooklm") && (sourceResult && !sourceResult.allow_base_knowledge)));
+        const allowBaseKnowledge = !strictSources;
+
+        const notebooksArray = [];
+        const notebookDetailsArray = [];
+        for (const s of canonicalSources) {
+            if (s.type === "notebooklm" || Array.isArray(s.notebooks) || Array.isArray(s.notebook_details)) {
+                const nbs = Array.isArray(s.notebooks) ? s.notebooks : (Array.isArray(s.value) ? s.value.map(v => typeof v === 'object' ? (v.id || v.title) : v) : (s.value?.id ? [s.value.id] : []));
+                for (const id of nbs) if (id && !notebooksArray.includes(id)) notebooksArray.push(id);
+                const dets = Array.isArray(s.notebook_details) ? s.notebook_details : (Array.isArray(s.value) && typeof s.value[0] === 'object' ? s.value : []);
+                for (const d of dets) if (d && d.id && !notebookDetailsArray.some(x => x.id === d.id)) notebookDetailsArray.push(d);
+            }
+        }
+        if (sourceResult && Array.isArray(sourceResult.notebooks)) {
+            for (const id of sourceResult.notebooks) if (id && !notebooksArray.includes(id)) notebooksArray.push(id);
+        }
+        if (sourceResult && Array.isArray(sourceResult.notebook_details)) {
+            for (const d of sourceResult.notebook_details) if (d && d.id && !notebookDetailsArray.some(x => x.id === d.id)) notebookDetailsArray.push(d);
+        }
+
+        const legacySource = canonicalSources.length === 1
+            ? canonicalSources[0]
+            : (sourceResult && sourceResult.type === "multi"
+                ? sourceResult
+                : { type: "multi", label: (sourceResult && sourceResult.label) || "Fonti multiple", value: canonicalSources });
 
         const jobData = {
+            job_id: jobId,
             timestamp: new Date().toISOString(),
             operation: chosenOp,
             operation_type: chosenOp,
@@ -3621,6 +3915,8 @@ module.exports = async function (tp) {
                 ? "MOC (Map of Content / Sub-MOC)"
                 : (chosenOp === "edit" ? "Modifica / Migliora Nota Esistente" : "Nota Normale (Nuova)"),
             moc_mode: chosenOp === "moc" ? mocMode : null,
+            sources: canonicalSources,
+            strict_sources: strictSources,
             allow_base_knowledge: allowBaseKnowledge,
             syllabus_text: syllabusText || "",
             syllabus_files: syllabusFiles || [],
@@ -3629,7 +3925,7 @@ module.exports = async function (tp) {
             syllabus_diary_text: syllabusDiary.text || "",
             syllabus_diary_files: syllabusDiary.files || [],
             notebook_id: notebooksArray.length > 0 ? notebooksArray[0] : (chosenOp === "moc" && notebookInfo ? notebookInfo.id : null),
-            notebook_title: isNotebookMulti ? sourceResult.label : (chosenOp === "moc" && notebookInfo ? notebookInfo.title : null),
+            notebook_title: (sourceResult && sourceResult.type === "notebooklm") ? sourceResult.label : (chosenOp === "moc" && notebookInfo ? notebookInfo.title : null),
             notebooks: notebooksArray,
             notebook_details: notebookDetailsArray,
             target_file_path: targetRelPath,
@@ -3641,7 +3937,7 @@ module.exports = async function (tp) {
             disciplina: chosenDiscipline.name,
             pole: chosenDiscipline.pole,
             topic: chosenOp === "edit" ? selectedFile.basename : topic.trim(),
-            source: sourceResult,
+            source: legacySource,
             status: "pending"
         };
 
@@ -4043,18 +4339,56 @@ async function runTutorFlow(tp, app, vaultBasePath, pre) {
             tp
         });
     };
-    const nlmSource = (details, allowBase) => ({
-        type: "notebooklm",
-        label: details.length === 1 ? `NotebookLM: ${details[0].title}` : `NotebookLM Multiplo (${details.length} fonti: ${nbNames(details)})`,
-        value: details, notebooks: details.map(d => d.id), notebook_details: details, allow_base_knowledge: allowBase
-    });
+    const nlmSource = (details, allowBase) => {
+        const strict = !allowBase;
+        const src = {
+            type: "notebooklm",
+            label: details.length === 1 ? `NotebookLM: ${details[0].title}` : `NotebookLM Multiplo (${details.length} fonti: ${nbNames(details)})`,
+            value: details,
+            notebooks: details.map(d => d.id),
+            notebook_details: details,
+            strict_sources: strict,
+            allow_base_knowledge: !strict
+        };
+        return Object.assign(src, {
+            sources: [src]
+        });
+    };
     const withSource = (job, source) => {
-        const isNlm = source.type === "notebooklm";
-        const details = isNlm ? source.notebook_details : [];
+        const sources = (source && Array.isArray(source.sources) && source.sources.length > 0)
+            ? source.sources
+            : (source ? [source] : []);
+        const strict = (source && source.strict_sources !== undefined)
+            ? Boolean(source.strict_sources)
+            : ((source && source.allow_base_knowledge !== undefined) ? !source.allow_base_knowledge : (source && source.type === "notebooklm"));
+        const allowBase = !strict;
+        const allNotebooks = [];
+        const allNotebookDetails = [];
+        for (const s of sources) {
+            if (s.type === "notebooklm" || Array.isArray(s.notebooks) || Array.isArray(s.notebook_details)) {
+                const nbs = Array.isArray(s.notebooks) ? s.notebooks : (Array.isArray(s.value) ? s.value.map(v => typeof v === 'object' ? (v.id || v.title) : v) : (s.value?.id ? [s.value.id] : []));
+                for (const id of nbs) if (id && !allNotebooks.includes(id)) allNotebooks.push(id);
+                const dets = Array.isArray(s.notebook_details) ? s.notebook_details : (Array.isArray(s.value) && typeof s.value[0] === 'object' ? s.value : []);
+                for (const d of dets) if (d && d.id && !allNotebookDetails.some(x => x.id === d.id)) allNotebookDetails.push(d);
+            }
+        }
+        if (source && Array.isArray(source.notebooks)) {
+            for (const id of source.notebooks) if (id && !allNotebooks.includes(id)) allNotebooks.push(id);
+        }
+        if (source && Array.isArray(source.notebook_details)) {
+            for (const d of source.notebook_details) if (d && d.id && !allNotebookDetails.some(x => x.id === d.id)) allNotebookDetails.push(d);
+        }
+        const jobId = job.job_id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         return Object.assign(job, {
-            source, allow_base_knowledge: isNlm ? source.allow_base_knowledge === true : true,
-            notebooks: details.map(d => d.id), notebook_details: details,
-            notebook_id: details.length ? details[0].id : null, notebook_title: isNlm ? source.label : null
+            job_id: jobId,
+            sources,
+            strict_sources: strict,
+            allow_base_knowledge: allowBase,
+            source,
+            notebooks: allNotebooks,
+            notebook_details: allNotebookDetails,
+            notebook_id: allNotebooks.length ? allNotebooks[0] : null,
+            notebook_title: (source && source.type === "notebooklm") ? source.label : null
         });
     };
     const startJob = job => {
@@ -4262,8 +4596,49 @@ async function runTutorFlow(tp, app, vaultBasePath, pre) {
     startJob(withSource(job, nlmSource(details, allowBase)));
 }
 
+function reopenProgressHud(app) {
+    const existing = document.getElementById("antigravity-progress-hud");
+    if (existing) {
+        try { existing.focus(); } catch (_) {}
+        existing.classList.remove("ag-hud-pulse-focus");
+        void existing.offsetWidth;
+        existing.classList.add("ag-hud-pulse-focus");
+        return existing;
+    }
+    const currentApp = app || (typeof window !== "undefined" && window.app);
+    const vaultBasePath = (currentApp && currentApp.vault && currentApp.vault.adapter && currentApp.vault.adapter.basePath)
+        || (window.app && window.app.vault && window.app.vault.adapter && window.app.vault.adapter.basePath) || "";
+    const ctl = getJobControl(vaultBasePath);
+    const job = ctl ? ctl.readJob() : null;
+    const status = ctl ? ctl.readStatus() : null;
+
+    const hasStatus = status && status.status && status.status !== "idle";
+    const hasJob = job && (job.job_id || job.topic || job.title);
+    if (!hasStatus && !hasJob) {
+        return null;
+    }
+
+    const jobData = job || {};
+    const targetFilePath = (status && status.target_file) || jobData.target_file_path || "";
+    const topicTitle = jobData.topic || jobData.title || (targetFilePath ? path.basename(targetFilePath, ".md") : "Nota Antigravity");
+    const childPid = (status && status.pid) || null;
+
+    if (status && status.job_start_time) {
+        window._agJobStartTime = status.job_start_time;
+    } else if (jobData.timestamp) {
+        const parsed = Date.parse(jobData.timestamp);
+        if (!isNaN(parsed)) window._agJobStartTime = parsed;
+    } else if (status && status.updated_at) {
+        window._agJobStartTime = status.updated_at;
+    }
+
+    renderProgressHud(currentApp, vaultBasePath, targetFilePath, topicTitle, childPid, jobData);
+    return document.getElementById("antigravity-progress-hud");
+}
+
 module.exports.launchBatch = launchBatch;
 module.exports.launchJob = launchBackgroundJob;
 module.exports.runTutorFlow = runTutorFlow;
 module.exports.openChoiceModal = openChoiceModal;
+module.exports.reopenProgressHud = reopenProgressHud;
 

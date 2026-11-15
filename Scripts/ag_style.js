@@ -1031,6 +1031,118 @@ module.exports = function injectAgStyle() {
                 transition: none !important;
             }
         }
+
+        /* ========================================================================= */
+        /* Status Bar Item (.ag-job-bar)                                             */
+        /* ========================================================================= */
+        .status-bar-item.ag-job-bar {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: var(--font-ui-smaller, 11px);
+            font-family: var(--font-interface);
+            color: var(--text-muted);
+            padding: 0 8px;
+            cursor: default;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .status-bar-item.ag-job-bar:hover {
+            color: var(--text-normal);
+        }
+        .ag-job-bar-text {
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-weight: var(--font-medium, 500);
+            max-width: 260px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .ag-job-bar-text:hover {
+            color: var(--interactive-accent);
+            text-decoration: underline;
+        }
+        .ag-job-bar-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .ag-job-bar-btn {
+            all: unset;
+            cursor: pointer;
+            font-size: 10px;
+            font-weight: 500;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--background-modifier-hover);
+            color: var(--text-muted);
+            line-height: 1.2;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+        .ag-job-bar-btn:hover {
+            background: var(--background-modifier-border-hover);
+            color: var(--text-normal);
+        }
+        .ag-job-bar-btn:focus-visible {
+            outline: 2px solid var(--interactive-accent);
+            outline-offset: 1px;
+        }
+        .ag-job-bar-btn.is-cancel {
+            color: var(--color-red, #ff3b30);
+        }
+        .ag-job-bar-btn.is-cancel:hover {
+            background: color-mix(in srgb, var(--color-red, #ff3b30) 15%, transparent);
+            color: var(--color-red, #ff3b30);
+        }
+        .ag-job-bar-btn:disabled {
+            opacity: 0.55;
+            cursor: default;
+            pointer-events: none;
+        }
+
+        /* ========================================================================= */
+        /* Multi-type source picker & strict toggle enhancements                     */
+        /* ========================================================================= */
+        .ag-picker-card[aria-pressed="true"] {
+            border-color: var(--interactive-accent);
+            background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+            box-shadow: var(--shadow-s);
+        }
+        .ag-picker-knowledge-sub {
+            font-size: var(--font-ui-smaller, 11px);
+            color: var(--text-muted);
+            margin: -4px 0 8px;
+            line-height: 1.3;
+        }
+        .ag-picker-type-block {
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--background-modifier-border);
+        }
+        .ag-picker-type-block:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+        .ag-picker-sub-label {
+            font-size: var(--font-ui-smaller, 11px);
+            font-weight: var(--font-semibold, 600);
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 6px;
+        }
+        @keyframes ag-hud-pulse-focus {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+            100% { transform: scale(1); }
+        }
+        .ag-hud.ag-hud-pulse-focus {
+            animation: ag-hud-pulse-focus 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
     
     `;
     document.head.appendChild(styleEl);

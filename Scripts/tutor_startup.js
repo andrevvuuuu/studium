@@ -30,6 +30,11 @@ module.exports = async function (tp) {
     }
     const pluginActive = !!app.plugins?.plugins?.["antigravity-tutor"];
     if (!pluginActive) render(app, vaultBasePath);
+    try {
+        const jobBarScript = path.join(vaultBasePath, "Scripts", "ag_job_bar.js");
+        delete require.cache[require.resolve(jobBarScript)];
+        require(jobBarScript).ensureJobBar(app);
+    } catch (_) {}
     if (window._agTutorWatching) return;
     window._agTutorWatching = true;
     if (!pluginActive) fs.watchFile(statePath, { interval: 2000 }, () => render(app, vaultBasePath));

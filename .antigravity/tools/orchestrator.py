@@ -33,8 +33,65 @@ import subprocess
 import sys
 import time
 import traceback
+import signal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from job_progress import phase_plan, compute_overall
+
+class JobCancelled(Exception):
+    pass
+
+def _current_job():
+    try: return json.loads((RUNTIME_DIR / "current-job.json").read_text(encoding="utf-8"))
+    except Exception: return {}
+
+def is_cancel_requested():
+    try:
+        req = json.loads((RUNTIME_DIR / "cancel-request.json").read_text(encoding="utf-8"))
+        current = _current_job().get("job_id")
+        return not req.get("job_id") or req.get("job_id") == current
+    except Exception: return False
+
+def normalize_sources(job_data):
+    raw = job_data.get("sources")
+    if not isinstance(raw, list) or not raw:
+        legacy = job_data.get("source") or {}
+        raw = legacy.get("value", []) if legacy.get("type") == "multi" else [legacy]
+    sources = [s for s in raw if isinstance(s, dict)]
+    strict = bool(job_data.get("strict_sources")) if "strict_sources" in job_data else bool(
+        (job_data.get("source") or {}).get("type") == "notebooklm" and not job_data.get("allow_base_knowledge", False))
+    return sources, strict
+
+def strict_source_block(sources):
+    items = "\n".join(f"> - {s.get('type', '')}: {s.get('label', 'Fonte')}" for s in sources)
+    return ("> [!DANGER] VINCOLO INDEROGABILE — SOLO FONTI SELEZIONATE\n"
+            "> Fonti ammesse (e solo queste):\n"
+            f"{items}\n"
+            "> È vietato usare conoscenza pre-addestrata, note non selezionate del Vault o materiale esterno.\n"
+            "> Ogni contenuto deve essere rintracciabile nel dossier delle fonti selezionate.\n"
+            "> Dichiara ogni lacuna con `*(Non presente nelle fonti selezionate)*` invece di integrarla.\n")
+
+def process_sources_multi(sources, vault_root, allegati_dir, context_dir, tools_dir, job_data, strict=False):
+    results=[]; total=len(sources)
+    for i, source in enumerate(sources):
+        if is_cancel_requested(): raise JobCancelled()
+        update_status(vault_root, 0, 2, message="📥 Estrazione fonti...", status="running", phase="sources", progress={"done":i,"total":total,"unit":"fonti"})
+        result=process_source_fast(source, vault_root, allegati_dir, context_dir, tools_dir, job_data)
+        raw=str(result.get("raw_source_text") or "")
+        if strict and len(raw.strip()) < 40:
+            raise RuntimeError(f"Fonte «{source.get('label','Fonte')}»: nessun testo estratto (modalità Solo fonti selezionate)")
+        result["raw_source_text"]=raw; results.append(result)
+        update_status(vault_root, 0, 2, message="📥 Fonti estratte", status="running", phase="sources", progress={"done":i+1,"total":total,"unit":"fonti"})
+    if len(results)==1: return results[0]
+    notebooks=[]; per_source=[]; files=[]; content=[]; raw=[]
+    for i,r in enumerate(results,1):
+        content.append(f"## Fonte {i}/{total} — {r.get('label','Fonte')} ({r.get('source_type','')})\n\n{r.get('content_markdown','')}")
+        raw.append(r.get("raw_source_text","")); files.extend(r.get("extracted_files",[])); per_source.append({"type":r.get("source_type"),"label":r.get("label"),"chars":len(r.get("raw_source_text", ""))})
+        notebooks.extend((r.get("metadata") or {}).get("notebooks",[]))
+    uniq=[]
+    for n in notebooks:
+        if n not in uniq: uniq.append(n)
+    return {"source_type":results[0].get("source_type") if len({r.get('source_type') for r in results})==1 else "multi", "label":" + ".join(r.get("label","Fonte") for r in results), "extracted_files":files,"content_markdown":"\n\n".join(content),"raw_source_text":"\n\n".join(raw),"metadata":{"notebooks":uniq,"per_source":per_source},"target_content":None}
 
 # Iniezione del PATH completo di macOS per ambienti grafici e terminali
 EXTRA_PATHS = [
@@ -259,6 +316,14 @@ def update_status(
     """
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     status_file = RUNTIME_DIR / "job-status.json"
+    current_job = _current_job()
+    job_id = current_job.get("job_id")
+    if status_file.exists() and is_cancel_requested():
+        try:
+            previous = json.loads(status_file.read_text(encoding="utf-8"))
+            if previous.get("status") == "cancelled" and previous.get("job_id") == job_id:
+                return
+        except Exception: pass
 
     # Preserva target_file se vuoto o non specificato (salvo stato idle)
     if status == "idle":
@@ -278,16 +343,29 @@ def update_status(
             except Exception:
                 pass
 
+    resolved_phase = phase or PHASE_BY_STEP.get(int(step_number), "")
+    plan = phase_plan(current_job.get("operation_type") or current_job.get("operation", "normal"), bool(current_job.get("strict_sources", (current_job.get("source") or {}).get("type") == "notebooklm" and not current_job.get("allow_base_knowledge", False))))
+    fraction = None
+    if progress and progress.get("total"):
+        fraction = float(progress.get("done", 0)) / float(progress["total"])
+    overall = 100 if status == "completed" else compute_overall(resolved_phase, fraction, plan)
+    if status == "running" and status_file.exists():
+        try:
+            prev = json.loads(status_file.read_text(encoding="utf-8"))
+            if prev.get("job_id") == job_id: overall = max(overall, int(prev.get("overall_percent", prev.get("percent", 0))))
+        except Exception: pass
     status_data = {
+        "job_id": job_id,
         "status": status,
-        "percent": max(0, min(100, int(percent))),
+        "percent": max(0, min(100, int(overall))),
+        "overall_percent": max(0, min(100, int(overall))),
         "step_number": int(step_number),
         "total_steps": int(total_steps),
         "message": message,
         "detail": detail,
         "target_file": target_file,
         "error": error,
-        "phase": phase or PHASE_BY_STEP.get(int(step_number), ""),
+        "phase": resolved_phase,
         "progress": progress,
         "pid": None if status in ["completed", "cancelled", "error", "idle"] else os.getpid(),
         "updated_at": int(time.time() * 1000),
@@ -483,6 +561,7 @@ def monitor_target_generation(
     initial_target_mtime: Optional[float] = None
 
     while (time.time() - start_time) < timeout_sec:
+        if is_cancel_requested(): raise JobCancelled()
         # 1. Controlla stati terminali esterni (annullato o errore)
         status_file = RUNTIME_DIR / "job-status.json"
         if status_file.exists():
@@ -1393,22 +1472,25 @@ def query_nlm_parallel(
         return results
     if on_progress:
         on_progress(0, len(tasks))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(tasks))) as pool:
-        futures = {
-            pool.submit(query_nlm_cli, nb_id, prompt, timeout_sec, include_quotes): key
-            for key, nb_id, prompt in tasks
-        }
-        for fut in concurrent.futures.as_completed(futures):
-            try:
-                results[futures[fut]] = fut.result()
-            except Exception as e:
-                sys.stderr.write(f"[Orchestrator] Eccezione query parallela nlm: {e}\n")
-                results[futures[fut]] = ""
-            if on_progress:
-                try:
-                    on_progress(len(results), len(tasks))
-                except Exception:
-                    pass
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(tasks)))
+    futures = {pool.submit(query_nlm_cli, nb_id, prompt, timeout_sec, include_quotes): key for key, nb_id, prompt in tasks}
+    pending = set(futures)
+    try:
+        while pending:
+            if is_cancel_requested():
+                for pending_future in pending: pending_future.cancel()
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise JobCancelled()
+            done, pending = concurrent.futures.wait(pending, timeout=0.2, return_when=concurrent.futures.FIRST_COMPLETED)
+            for fut in done:
+                try: results[futures[fut]] = fut.result()
+                except Exception as e:
+                    sys.stderr.write(f"[Orchestrator] Eccezione query parallela nlm: {e}\n"); results[futures[fut]] = ""
+                if on_progress:
+                    try: on_progress(len(results), len(tasks))
+                    except Exception: pass
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
     return results
 
 
@@ -2871,6 +2953,8 @@ def build_moc_operational_prompt(
     titles_file = write_planned_titles(vault_root, discipline, moc_target, context_dir)
 
     prompt_lines: List[str] = []
+    strict_sources, strict_mode = normalize_sources(job_data)
+    if strict_mode: prompt_lines.append(strict_source_block(strict_sources))
 
     # -------------------------------------------------------------
     # CASO A: MOC di Inizio Studio da NotebookLM (Singolo o Multi-Fonte)
@@ -3147,6 +3231,8 @@ def build_edit_operational_prompt(
     backup_str = str(backup_file) if backup_file else str(vault_root / ".antigravity" / "backups" / "[backup mancante]")
 
     prompt_lines: List[str] = []
+    strict_sources, strict_mode = normalize_sources(job_data)
+    if strict_mode: prompt_lines.append(strict_source_block(strict_sources))
 
     # -------------------------------------------------------------
     # 1. MODALITÀ: CORREZIONE O AMPLIAMENTO CHIRURGICO (surgical_prompt)
@@ -3522,6 +3608,8 @@ def build_operational_prompt(
     target_rel = job_data.get("target_file_path") or f"{discipline}/{topic}.md"
 
     prompt_lines: List[str] = []
+    strict_sources, strict_mode = normalize_sources(job_data)
+    if strict_mode: prompt_lines.append(strict_source_block(strict_sources))
     prompt_lines.append(f"# MISSIONE OPERATIVA ANTIGRAVITY: {topic.upper()}")
     prompt_lines.append("")
     prompt_lines.append("## Parametri del Job")
@@ -3578,7 +3666,8 @@ def build_operational_prompt(
     prompt_lines.append(f"- **Istruzioni Statiche Compilate:** `file://{compiled_instructions_path}`")
     prompt_lines.append(f"- **Indice del Vault:** `file://{resolve_vault_index_path(vault_root)}`")
     prompt_lines.append(f"- **Collegamenti Chirurgici Raccomandati:** `file://{recom_links_path}`")
-    prompt_lines.append(f"- **Tesi ed Evidenze Preesistenti nel Vault (Controllo Conflitti Epistemici):** `file://{claims_path}`")
+    if not strict_mode:
+        prompt_lines.append(f"- **Tesi ed Evidenze Preesistenti nel Vault (Controllo Conflitti Epistemici):** `file://{claims_path}`")
     prompt_lines.append(f"- **Cartella Allegati:** `file://{vault_root / 'allegati'}`")
     prompt_lines.append("")
 
@@ -4156,10 +4245,14 @@ def verify_note_grounding(vault_root: Path, job_data: Dict[str, Any], target_rel
         status="running", target_file=target_rel, phase="verify",
     )
     t0 = time.time()
-    verdicts = arbitrate_claims_with_notebooklm(claims, notebooks, on_progress=progress_reporter(
-        vault_root, 97, 6, f"🛡️ Verifica esclusività: NotebookLM controlla {len(claims)} affermazioni sospette",
-        "verify", target_rel, unit="verifiche",
-    ))
+    if notebooks:
+        verdicts = arbitrate_claims_with_notebooklm(claims, notebooks, on_progress=progress_reporter(
+            vault_root, 97, 6, f"🛡️ Verifica esclusività: NotebookLM controlla {len(claims)} affermazioni sospette",
+            "verify", target_rel, unit="risposte",
+        ))
+    else:
+        # Nessun arbitro esterno: le voci restano nella nota e vengono segnalate come non verificate
+        verdicts = {claim["id"]: None for claim in claims}
     report["seconds_arbitration"] = int(time.time() - t0)
     # Si rimuove solo ciò che NotebookLM nega esplicitamente; il non verificabile resta e viene segnalato
     report["confirmed"] = [c for c in claims if verdicts.get(c["id"]) is True]
@@ -4532,6 +4625,11 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    def _cancel_signal(signum, frame):
+        raise JobCancelled()
+    signal.signal(signal.SIGTERM, _cancel_signal)
+    signal.signal(signal.SIGINT, _cancel_signal)
+
     vault_root = resolve_vault_root()
 
     if args.post_process:
@@ -4775,6 +4873,7 @@ def main() -> int:
                     job_data["backup_rel"] = str(backup_file.relative_to(vault_root))
                 except Exception:
                     job_data["backup_rel"] = str(backup_file)
+                job_file.write_text(json.dumps(job_data, indent=2, ensure_ascii=False), encoding="utf-8")
                 print(f"   Backup salvato in: {backup_file}")
             else:
                 print(f"   ⚠️ Impossibile creare il backup per {target_edit_rel}")
@@ -4789,7 +4888,8 @@ def main() -> int:
         )
 
         # Step 2/6 (25%): Estrazione fonte in corso
-        source_info = job_data.get("source") or {}
+        sources, strict = normalize_sources(job_data)
+        source_info = sources[0] if sources else (job_data.get("source") or {})
         update_status(
             vault_root=vault_root,
             percent=25,
@@ -4803,17 +4903,22 @@ def main() -> int:
         time.sleep(0.35)
 
         print(f"🔄 Elaborazione rapida fonte: {source_info.get('label')} [tipo: {source_info.get('type')}]...")
-        source_results = process_source_fast(
-            source_info=source_info,
+        source_results = process_sources_multi(
+            sources=sources,
             vault_root=vault_root,
             allegati_dir=allegati_dir,
             context_dir=context_dir,
             tools_dir=tools_dir,
             job_data=job_data,
+            strict=strict,
         )
+        if strict:
+            manifest = {"sources": (source_results.get("metadata") or {}).get("per_source") or [{"type": source_results.get("source_type"), "label": source_results.get("label"), "chars": len(source_results.get("raw_source_text", ""))}]}
+            (context_dir / "sources-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
         # Salva il contenuto estratto della fonte
         (context_dir / "source_content.md").write_text(source_results["content_markdown"], encoding="utf-8")
+        (context_dir / "extracted_source.md").write_text(source_results["content_markdown"] or source_results.get("raw_source_text", ""), encoding="utf-8")
         extracted_media_count = len(source_results.get("extracted_files", []))
         source_char_count = len(source_results.get("content_markdown", ""))
 
@@ -4836,11 +4941,12 @@ def main() -> int:
             "science_media": None,
             "targeted_pubmed_queries": [],
         }
-        should_run_auto_tools = True
+        should_run_auto_tools = not strict
         if op_type == "edit" and job_data.get("edit_mode") in ["surgical_prompt", "reformat_standard"]:
             should_run_auto_tools = False
 
-        studies_only = source_info.get("type") == "studies"
+        studies_only = len(sources) == 1 and source_info.get("type") == "studies"
+        if strict and any(s.get("type") == "studies" for s in sources): should_run_auto_tools = True
 
         def evidence_progress(msg: str, done: int, total: int) -> None:
             update_status(
@@ -4939,8 +5045,7 @@ def main() -> int:
         job_data["target_file_rel"] = target_rel
         job_data["grounding_verification_required"] = bool(
             op_type == "normal"
-            and source_info.get("type") in ["notebooklm", "notebooklm_manual"]
-            and not (job_data.get("allow_base_knowledge") or source_info.get("allow_base_knowledge"))
+            and strict
         )
         job_data["moc_check_required"] = op_type == "moc"
         job_data["processed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -4980,6 +5085,9 @@ def main() -> int:
 
         return 0
 
+    except JobCancelled:
+        update_status(vault_root=vault_root, percent=0, step_number=0, message="Operazione annullata", status="cancelled", phase="final")
+        return 130
     except Exception as e:
         err_detail = traceback.format_exc()
         sys.stderr.write(f"\n❌ ERRORE CRITICO ORCHESTRATOR:\n{err_detail}\n")

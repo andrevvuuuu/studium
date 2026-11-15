@@ -19,6 +19,8 @@ RUNTIME_DIR="${ANTIGRAVITY_RUNTIME_DIR:-/tmp/antigravity_runtime}"
 # python3 con le librerie di Studium (vedi .antigravity/bin/python3)
 export PATH="$VAULT_DIR/.antigravity/bin:$PATH"
 mkdir -p "$RUNTIME_DIR"
+ps -o pgid= $$ | tr -d ' ' > "$RUNTIME_DIR/job.pgid"
+rm -f "$RUNTIME_DIR/agy-start.marker"
 
 cd "$VAULT_DIR"
 
@@ -29,9 +31,11 @@ PROMPT_FILE="$RUNTIME_DIR/current-prompt.md"
 
 # Determina TARGET_FILE iniziale dal job file se presente
 TARGET_FILE=""
+TARGET_EXISTED_AT_START=0
 if [ -f "$JOB_FILE" ]; then
     TARGET_FILE=$(python3 -c "import json; j=json.load(open('$JOB_FILE')); print(j.get('target_file_rel') or j.get('target_file_path') or '')" 2>/dev/null || echo "")
 fi
+if [ -n "$TARGET_FILE" ] && [ -e "$VAULT_DIR/$TARGET_FILE" ]; then TARGET_EXISTED_AT_START=1; fi
 
 MONITOR_PID=""
 
@@ -44,6 +48,28 @@ cleanup() {
     fi
 }
 trap 'cleanup' EXIT
+
+on_cancel() {
+    trap - TERM INT ERR
+    [ -n "$MONITOR_PID" ] && kill -TERM "$MONITOR_PID" 2>/dev/null || true
+    # Solo i processi di questo job (figli diretti); il resto del gruppo riceve il segnale dal menu
+    pkill -TERM -P $$ 2>/dev/null || true
+    if [ -f "$JOB_FILE" ] && [ -n "$TARGET_FILE" ]; then
+        OP=$(python3 -c "import json; j=json.load(open('$JOB_FILE')); print(j.get('operation_type') or j.get('operation') or '')" 2>/dev/null || echo "")
+        BACKUP=$(python3 -c "import json; print(json.load(open('$JOB_FILE')).get('backup_file') or '')" 2>/dev/null || echo "")
+        if [ "$OP" != "edit" ] && [ "$TARGET_EXISTED_AT_START" = 0 ]; then
+            # Nota nuova: il file parziale non deve restare nel vault
+            rm -f "$VAULT_DIR/$TARGET_FILE"
+        elif [ -n "$BACKUP" ] && [ -f "$BACKUP" ] && [ -f "$RUNTIME_DIR/agy-start.marker" ] && [ "$VAULT_DIR/$TARGET_FILE" -nt "$RUNTIME_DIR/agy-start.marker" ]; then
+            # Nota preesistente toccata dallo scrittore: si ripristina il backup
+            cp "$BACKUP" "$VAULT_DIR/$TARGET_FILE"
+        fi
+    fi
+    rm -rf "$RUNTIME_DIR/job-context"
+    update_status 0 6 "Operazione annullata" "Job interrotto dall'utente" "cancelled"
+    exit 130
+}
+trap 'on_cancel' TERM INT
 
 # Funzione helper per aggiornamento stato atomico della pipeline
 update_status() {
@@ -71,6 +97,9 @@ update_status() {
 # Trap degli errori per aggiornare lo stato in /tmp/antigravity_runtime/job-status.json
 handle_error() {
     local exit_code=$?
+    local current_status=""
+    if [ -f "$STATUS_FILE" ]; then current_status=$(python3 -c "import json; print(json.load(open('$STATUS_FILE')).get('status',''))" 2>/dev/null || echo ""); fi
+    [ "$current_status" = "cancelled" ] && return 0
     echo "❌ Errore durante l'esecuzione del job (exit code: $exit_code)"
     # Preserva il messaggio d'errore descrittivo se già registrato da orchestrator.py
     local current_status=""
